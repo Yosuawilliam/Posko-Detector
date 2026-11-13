@@ -1,7 +1,7 @@
 import io
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import qrcode
@@ -22,13 +22,16 @@ from models import (
     Posko,
     Resident,
 )
+from posko_detector import classify_resident_box
 
 face_service = FaceRecognitionService()
 
 DEFAULT_DETECTOR_STATE: dict[str, Any] = {
+    "online": False,
     "yolo_camera_online": False,
     "active_posko": "POSKO-A",
     "person_count": 0,
+    "detected_residents": [],
     "recognized_residents": [],
     "last_sync": None,
 }
@@ -39,6 +42,7 @@ detector_state: dict[str, Any] = dict(DEFAULT_DETECTOR_STATE)
 def reset_detector_state() -> None:
     detector_state.clear()
     detector_state.update(DEFAULT_DETECTOR_STATE)
+    detector_state["detected_residents"] = []
     detector_state["recognized_residents"] = []
 
 
@@ -878,4 +882,196 @@ def scan_meals_endpoint(
         scanner_posko_code=payload.scanner_posko_code,
     )
     return JSONResponse(status_code=http_status, content=body)
+
+
+class DetectorSyncRequest(BaseModel):
+    active_posko: str = Field(default="POSKO-A", min_length=1, max_length=32)
+    person_count: int = Field(default=0, ge=0)
+    detected_resident_ids: list[int] = Field(default_factory=list)
+    action: str | None = Field(default=None)
+
+
+@app.get("/api/detector/status")
+def get_detector_status() -> dict[str, Any]:
+    return {
+        "online": bool(detector_state.get("online", False)),
+        "yolo_camera_online": bool(detector_state.get("yolo_camera_online", False)),
+        "active_posko": detector_state.get("active_posko", "POSKO-A"),
+        "person_count": int(detector_state.get("person_count", 0)),
+        "detected_residents": list(detector_state.get("detected_residents", [])),
+        "recognized_residents": list(detector_state.get("recognized_residents", [])),
+        "last_sync": detector_state.get("last_sync"),
+    }
+
+
+@app.post("/api/detector/sync")
+def sync_detector(
+    payload: DetectorSyncRequest,
+    db: Session = Depends(get_db),
+    _admin: str = Depends(verify_admin_auth),
+) -> dict[str, Any]:
+    active_posko = payload.active_posko.strip().upper()
+    poskos = db.scalars(select(Posko).order_by(Posko.code.asc())).all()
+    if poskos and not any(p.code == active_posko for p in poskos):
+        active_posko = poskos[0].code
+
+    today = date.today()
+    unique_ids: list[int] = []
+    for raw_id in payload.detected_resident_ids:
+        rid = int(raw_id)
+        if rid not in unique_ids:
+            unique_ids.append(rid)
+
+    action_result: dict[str, Any] | None = None
+    action_name = payload.action.strip().lower() if payload.action else None
+
+    if action_name == "switch_posko":
+        codes = [p.code for p in poskos]
+        if codes:
+            curr_idx = codes.index(active_posko) if active_posko in codes else 0
+            active_posko = codes[(curr_idx + 1) % len(codes)]
+        action_result = {
+            "action": "switch_posko",
+            "active_posko": active_posko,
+        }
+
+    elif action_name == "serve_all":
+        served_count = 0
+        results: list[dict[str, Any]] = []
+        for rid in unique_ids:
+            resident = db.scalar(select(Resident).where(Resident.id == rid))
+            if resident is None or resident.posko_code != active_posko:
+                continue
+            current_meals = (
+                db.scalar(
+                    select(func.count(DistributionLog.id)).where(
+                        DistributionLog.resident_id == resident.id,
+                        DistributionLog.claim_date == today,
+                        DistributionLog.status == "SUCCESS",
+                    )
+                )
+                or 0
+            )
+            if current_meals < MAX_DAILY_MEALS:
+                http_code, claim_body = scan_meal_claim(
+                    db=db,
+                    qr_or_nik=resident.qr_token,
+                    scanner_posko_code=active_posko,
+                )
+                results.append(claim_body)
+                if http_code == status.HTTP_200_OK and claim_body.get("status") == "SUCCESS":
+                    served_count += 1
+        action_result = {
+            "action": "serve_all",
+            "served_count": served_count,
+            "results": results,
+        }
+
+    elif action_name == "restock_20":
+        posko_locked = db.scalar(
+            select(Posko).where(Posko.code == active_posko).with_for_update()
+        )
+        if posko_locked is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Posko '{active_posko}' tidak ditemukan",
+            )
+        posko_locked.stock_meals += 20
+        db.commit()
+        db.refresh(posko_locked)
+        action_result = {
+            "action": "restock_20",
+            "stock_meals": posko_locked.stock_meals,
+        }
+
+    elif action_name == "use_gallon":
+        posko_locked = db.scalar(
+            select(Posko).where(Posko.code == active_posko).with_for_update()
+        )
+        if posko_locked is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Posko '{active_posko}' tidak ditemukan",
+            )
+        if posko_locked.stock_gallons > 0:
+            posko_locked.stock_gallons -= 1
+            log_entry = DistributionLog(
+                claim_date=today,
+                resident_id=None,
+                resident_name="Logistik Galon Air",
+                resident_nik=None,
+                scanner_posko_code=posko_locked.code,
+                resident_posko_code=posko_locked.code,
+                status="GALLON_USE",
+                meal_sequence=None,
+                cost_rupiah=GALLON_PRICE,
+                notes="Pemakaian 1 galon air",
+            )
+            db.add(log_entry)
+            db.commit()
+            db.refresh(posko_locked)
+        action_result = {
+            "action": "use_gallon",
+            "stock_gallons": posko_locked.stock_gallons,
+        }
+
+    elif action_name == "reload_faces":
+        trained = bool(face_service.train_model())
+        action_result = {
+            "action": "reload_faces",
+            "trained": trained,
+        }
+
+    detected_residents: list[dict[str, Any]] = []
+    if unique_ids:
+        res_rows = db.scalars(
+            select(Resident).where(Resident.id.in_(unique_ids))
+        ).all()
+        res_by_id = {r.id: r for r in res_rows}
+        meals_rows = db.execute(
+            select(DistributionLog.resident_id, func.count(DistributionLog.id))
+            .where(
+                DistributionLog.resident_id.in_(unique_ids),
+                DistributionLog.claim_date == today,
+                DistributionLog.status == "SUCCESS",
+            )
+            .group_by(DistributionLog.resident_id)
+        ).all()
+        meals_map = {res_id: cnt for res_id, cnt in meals_rows}
+
+        for rid in unique_ids:
+            resident = res_by_id.get(rid)
+            if resident is None:
+                continue
+            today_meals = meals_map.get(resident.id, 0)
+            enriched = serialize_resident(resident, today_meals=today_meals)
+            box_status, _color = classify_resident_box(enriched, active_posko)
+            enriched["box_status"] = box_status
+            detected_residents.append(enriched)
+
+    active_posko_obj = db.scalar(select(Posko).where(Posko.code == active_posko))
+    posko_summary = (
+        serialize_posko(active_posko_obj, db=db) if active_posko_obj is not None else {}
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    detector_state["online"] = True
+    detector_state["yolo_camera_online"] = True
+    detector_state["active_posko"] = active_posko
+    detector_state["person_count"] = int(payload.person_count)
+    detector_state["detected_residents"] = detected_residents
+    detector_state["recognized_residents"] = detected_residents
+    detector_state["last_sync"] = now_iso
+
+    return {
+        "detector_online": True,
+        "online": True,
+        "active_posko": active_posko,
+        "person_count": int(payload.person_count),
+        "detected_residents": detected_residents,
+        "action_result": action_result,
+        "posko_summary": posko_summary,
+        "last_sync": now_iso,
+    }
+
 

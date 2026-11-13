@@ -6,7 +6,7 @@ from typing import Any
 
 import qrcode
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -85,6 +85,11 @@ class ResidentCreateRequest(BaseModel):
     photo_front: str | None = Field(default=None)
     photo_left: str | None = Field(default=None)
     photo_right: str | None = Field(default=None)
+
+
+class MealScanRequest(BaseModel):
+    qr_or_nik: str = Field(..., min_length=1, max_length=128)
+    scanner_posko_code: str = Field(..., min_length=1, max_length=32)
 
 
 def compute_stock_status(stock: int, min_alert: int) -> str:
@@ -694,3 +699,183 @@ def get_known_face_photo(folder: str, filename: str) -> FileResponse:
             detail="Foto wajah tidak ditemukan",
         )
     return FileResponse(safe_path, media_type="image/jpeg")
+
+
+def scan_meal_claim(
+    db: Session,
+    qr_or_nik: str,
+    scanner_posko_code: str,
+) -> tuple[int, dict[str, Any]]:
+    clean_qr_or_nik = qr_or_nik.strip()
+    clean_posko_code = scanner_posko_code.strip().upper()
+
+    resident = db.scalar(
+        select(Resident)
+        .where(
+            or_(
+                Resident.qr_token == clean_qr_or_nik,
+                Resident.nik == clean_qr_or_nik,
+            )
+        )
+        .with_for_update()
+    )
+    if resident is None:
+        return (
+            status.HTTP_404_NOT_FOUND,
+            {
+                "status": "NOT_FOUND",
+                "audio_cue": "denied",
+                "message": f"Warga dengan QR/NIK '{clean_qr_or_nik}' tidak ditemukan",
+            },
+        )
+
+    posko = db.scalar(
+        select(Posko).where(Posko.code == clean_posko_code).with_for_update()
+    )
+    if posko is None:
+        return (
+            status.HTTP_404_NOT_FOUND,
+            {
+                "status": "NOT_FOUND",
+                "audio_cue": "denied",
+                "message": f"Posko '{clean_posko_code}' tidak ditemukan",
+            },
+        )
+
+    today = date.today()
+    count = (
+        db.scalar(
+            select(func.count(DistributionLog.id)).where(
+                DistributionLog.resident_id == resident.id,
+                DistributionLog.claim_date == today,
+                DistributionLog.status == "SUCCESS",
+            )
+        )
+        or 0
+    )
+
+    if resident.posko_code != posko.code:
+        msg = f"Cross-Posko Claim Denied: Warga terdaftar di {resident.posko_code}"
+        log_entry = DistributionLog(
+            claim_date=today,
+            resident_id=resident.id,
+            resident_name=resident.full_name,
+            resident_nik=resident.nik,
+            scanner_posko_code=posko.code,
+            resident_posko_code=resident.posko_code,
+            status="DENIED_WRONG_POSKO",
+            meal_sequence=None,
+            cost_rupiah=0,
+            notes=msg,
+        )
+        db.add(log_entry)
+        db.commit()
+        return (
+            status.HTTP_403_FORBIDDEN,
+            {
+                "status": "DENIED_WRONG_POSKO",
+                "audio_cue": "denied",
+                "message": msg,
+                "resident": serialize_resident(resident, today_meals=count),
+            },
+        )
+
+    if count >= MAX_DAILY_MEALS:
+        msg = "Kuota harian 3/3 porsi sudah habis"
+        log_entry = DistributionLog(
+            claim_date=today,
+            resident_id=resident.id,
+            resident_name=resident.full_name,
+            resident_nik=resident.nik,
+            scanner_posko_code=posko.code,
+            resident_posko_code=resident.posko_code,
+            status="DENIED_EXCEEDED",
+            meal_sequence=count,
+            cost_rupiah=0,
+            notes=msg,
+        )
+        db.add(log_entry)
+        db.commit()
+        return (
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            {
+                "status": "DENIED_EXCEEDED",
+                "audio_cue": "quota_exceeded",
+                "meal_sequence": count,
+                "max_meals": MAX_DAILY_MEALS,
+                "message": msg,
+                "resident": serialize_resident(resident, today_meals=count),
+            },
+        )
+
+    if posko.stock_meals <= 0:
+        msg = "Stok porsi makanan di posko ini habis (0)"
+        log_entry = DistributionLog(
+            claim_date=today,
+            resident_id=resident.id,
+            resident_name=resident.full_name,
+            resident_nik=resident.nik,
+            scanner_posko_code=posko.code,
+            resident_posko_code=resident.posko_code,
+            status="DENIED_NO_STOCK",
+            meal_sequence=None,
+            cost_rupiah=0,
+            notes=msg,
+        )
+        db.add(log_entry)
+        db.commit()
+        return (
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "status": "DENIED_NO_STOCK",
+                "audio_cue": "denied",
+                "message": msg,
+                "resident": serialize_resident(resident, today_meals=count),
+            },
+        )
+
+    posko.stock_meals -= 1
+    seq = count + 1
+    msg = f"Klaim makan ke-{seq}/{MAX_DAILY_MEALS} berhasil"
+    log_entry = DistributionLog(
+        claim_date=today,
+        resident_id=resident.id,
+        resident_name=resident.full_name,
+        resident_nik=resident.nik,
+        scanner_posko_code=posko.code,
+        resident_posko_code=resident.posko_code,
+        status="SUCCESS",
+        meal_sequence=seq,
+        cost_rupiah=MEAL_PRICE,
+        notes=msg,
+    )
+    db.add(log_entry)
+    db.commit()
+    db.refresh(posko)
+    return (
+        status.HTTP_200_OK,
+        {
+            "status": "SUCCESS",
+            "audio_cue": "success",
+            "meal_sequence": seq,
+            "max_meals": MAX_DAILY_MEALS,
+            "cost_rupiah": MEAL_PRICE,
+            "posko_stock_remaining": posko.stock_meals,
+            "message": msg,
+            "resident": serialize_resident(resident, today_meals=seq),
+        },
+    )
+
+
+@app.post("/api/meals/scan")
+def scan_meals_endpoint(
+    payload: MealScanRequest,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    http_status, body = scan_meal_claim(
+        db=db,
+        qr_or_nik=payload.qr_or_nik,
+        scanner_posko_code=payload.scanner_posko_code,
+    )
+    return JSONResponse(status_code=http_status, content=body)
+

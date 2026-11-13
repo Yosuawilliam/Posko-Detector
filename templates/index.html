@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Posko Detector — Sistem Manajemen Distribusi Logistik Bencana</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/html5-qrcode" defer></script>
+    <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+    <!-- Global Warning Banner -->
+    <div id="globalWarningBanner" class="global-warning-banner hidden" role="alert">
+        <div class="warning-icon">&#9888;</div>
+        <div id="globalWarningText" class="warning-text">
+            Peringatan Stok Posko: Memuat status logistik...
+        </div>
+    </div>
+
+    <!-- Top Navbar -->
+    <header class="navbar">
+        <div class="navbar-brand">
+            <span class="brand-badge">AI + QR</span>
+            <div>
+                <h1>Posko Detector &amp; Logistik Bencana</h1>
+                <p class="brand-subtitle">Sistem Proteksi Anti-Dobel Klaim, Kuota 3x Sehari &amp; Kamera YOLO LBPH</p>
+            </div>
+        </div>
+
+        <div class="navbar-controls">
+            <div class="posko-selector-group">
+                <label for="activePoskoSelect">Posko Aktif:</label>
+                <select id="activePoskoSelect" class="posko-select" aria-label="Pilih Posko Aktif">
+                    <option value="POSKO-A">POSKO-A</option>
+                </select>
+            </div>
+
+            <div id="navbarProtectionBadge" class="protection-pill">
+                <span class="dot online"></span>
+                <span>Cross-Lock ACTIVE</span>
+            </div>
+
+            <button type="button" id="openAdminTokenModalBtn" class="btn btn-outline btn-sm">
+                Token Admin
+            </button>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- 8 Main Metric Cards -->
+        <section class="metrics-grid" aria-label="Ringkasan Statistik Posko">
+            <!-- 1. Stok Posko Aktif -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Stok Posko Aktif</span>
+                    <span id="metricStockStatusBadge" class="badge badge-safe">Stok Aman</span>
+                </div>
+                <div class="metric-value"><span id="metricStockMeals">0</span> <small>Porsi</small></div>
+                <div class="metric-footer" id="metricActivePoskoName">Memuat posko...</div>
+            </article>
+
+            <!-- 2. Total Warga Terdaftar -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Total Warga Terdaftar</span>
+                    <span class="badge badge-info">Terverifikasi</span>
+                </div>
+                <div class="metric-value"><span id="metricTotalResidents">0</span> <small>Jiwa</small></div>
+                <div class="metric-footer">Terdaftar di seluruh posko (<span id="metricPoskoResidents">0</span> di posko ini)</div>
+            </article>
+
+            <!-- 3. Porsi Terdistribusi Hari Ini -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Porsi Terdistribusi Hari Ini</span>
+                    <span class="badge badge-primary">Maks 3x/Warga</span>
+                </div>
+                <div class="metric-value"><span id="metricTodayMeals">0</span> <small>Porsi</small></div>
+                <div class="metric-footer">Posko aktif hari ini: <strong id="metricActivePoskoTodayMeals">0</strong> porsi</div>
+            </article>
+
+            <!-- 4. Biaya Makanan (Hari Ini) -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Biaya Makanan (Hari Ini)</span>
+                    <span class="badge badge-neutral">Rp 35.000 / porsi</span>
+                </div>
+                <div class="metric-value" id="metricMealCost">Rp 0</div>
+                <div class="metric-footer">Akumulasi distribusi makanan hari ini</div>
+            </article>
+
+            <!-- 5. Pengeluaran Galon Air (Hari Ini) -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Pengeluaran Galon Air (Hari Ini)</span>
+                    <span class="badge badge-neutral">Rp 22.000 / galon</span>
+                </div>
+                <div class="metric-value" id="metricGallonCost">Rp 0</div>
+                <div class="metric-footer">Terpakai hari ini: <strong id="metricTodayGallonsUsed">0</strong> galon</div>
+            </article>
+
+            <!-- 6. Total Pengeluaran (Hari Ini) -->
+            <article class="metric-card metric-card-highlight">
+                <div class="metric-header">
+                    <span class="metric-title">Total Pengeluaran (Hari Ini)</span>
+                    <span class="badge badge-warning">Makanan + Galon</span>
+                </div>
+                <div class="metric-value" id="metricTotalCost">Rp 0</div>
+                <div class="metric-footer">Total nilai logistik keluar hari ini</div>
+            </article>
+
+            <!-- 7. Stok Galon Air Posko -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Stok Galon Air Posko</span>
+                    <span id="metricGallonStatusBadge" class="badge badge-safe">Stok Aman</span>
+                </div>
+                <div class="metric-value"><span id="metricStockGallons">0</span> <small>Galon</small></div>
+                <div class="metric-footer">Nilai stok: <span id="metricGallonStockValue">Rp 0</span></div>
+            </article>
+
+            <!-- 8. Status Proteksi & Stock -->
+            <article class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-title">Status Proteksi &amp; Stock</span>
+                    <span id="metricYoloBadge" class="badge badge-neutral">YOLO Standby</span>
+                </div>
+                <div class="metric-value metric-value-sm" id="metricProtectionStatus">Cross-Lock Aktif</div>
+                <div class="metric-footer">Kamera Tenda: <span id="metricTentPersonCount">0</span> orang terdeteksi</div>
+            </article>
+        </section>
+
+        <!-- Live Camera Tent Monitor Widget -->
+        <section class="tent-monitor-card" aria-label="Live Camera Tent Monitor">
+            <div class="tent-monitor-header">
+                <div class="tent-monitor-title-wrap">
+                    <h2>Live Camera Tent Monitor</h2>
+                    <span id="tentCameraStatusBadge" class="badge badge-neutral">Standby</span>
+                    <span class="tent-sync-time" id="tentLastSyncText">Belum ada sinkronisasi kamera</span>
+                </div>
+                <div class="tent-quick-actions">
+                    <button type="button" class="btn btn-sm btn-success" id="btnQuickServeAll" title="Layani semua warga valid di tenda">
+                        Layani Warga Terdeteksi (S)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-primary" id="btnQuickRestock20" title="Tambah 20 porsi makanan cepat">
+                        +20 Porsi (A)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-warning" id="btnQuickUseGallon" title="Pakai 1 galon air">
+                        -1 Galon (G)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline" id="btnQuickReloadFaces" title="Latih ulang model wajah LBPH">
+                        Reload LBPH (R)
+                    </button>
+                </div>
+            </div>
+
+            <div class="tent-monitor-body">
+                <div class="tent-stat-box">
+                    <span class="tent-stat-label">Jumlah Orang di Tenda</span>
+                    <strong class="tent-stat-number" id="tentPersonCount">0</strong>
+                    <span class="tent-stat-sub">Deteksi YOLO + ByteTrack</span>
+                </div>
+                <div class="tent-recognized-box">
+                    <div class="tent-recognized-header">
+                        <strong>Warga Teridentifikasi Wajah (LBPH) &amp; Sisa Kuota Makan Hari Ini</strong>
+                    </div>
+                    <div id="tentRecognizedList" class="tent-recognized-list">
+                        <div class="empty-inline">Belum ada warga yang terdeteksi di kamera tenda.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5 Navigation Tabs -->
+        <nav class="tabs-nav" role="tablist" aria-label="Menu Utama Dashboard">
+            <button type="button" class="tab-btn active" data-tab="tab-scan" role="tab" aria-selected="true">
+                Scan QR Makanan
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-register" role="tab" aria-selected="false">
+                Registrasi Warga Baru
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-cards" role="tab" aria-selected="false">
+                Cetak Digital ID QR
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-posko" role="tab" aria-selected="false">
+                Manajemen Stok &amp; Posko
+            </button>
+            <button type="button" class="tab-btn" data-tab="tab-logs" role="tab" aria-selected="false">
+                Log Riwayat Distribusi
+            </button>
+        </nav>
+
+        <!-- TAB 1: Scan QR Makanan -->
+        <section id="tab-scan" class="tab-panel active" role="tabpanel">
+            <div class="grid-2col">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Kamera Scanner QR &amp; Input Manual NIK / Token</h3>
+                        <div class="scanner-btn-group">
+                            <button type="button" id="startQrScannerBtn" class="btn btn-sm btn-primary">Aktifkan Kamera QR</button>
+                            <button type="button" id="stopQrScannerBtn" class="btn btn-sm btn-outline hidden">Matikan Kamera</button>
+                        </div>
+                    </div>
+
+                    <div id="qrReader" class="qr-reader-box">
+                        <div class="qr-placeholder">Klik "Aktifkan Kamera QR" untuk memindai kartu QR warga secara langsung, atau gunakan form input manual di bawah.</div>
+                    </div>
+
+                    <form id="manualScanForm" class="manual-scan-form">
+                        <div class="form-group">
+                            <label for="qrOrNikInput">Input QR Token atau NIK Warga</label>
+                            <div class="input-with-btn">
+                                <input
+                                    type="text"
+                                    id="qrOrNikInput"
+                                    name="qr_or_nik"
+                                    placeholder="Contoh: QR-POSKO-A-320101... atau NIK 320101..."
+                                    required
+                                    autocomplete="off"
+                                >
+                                <button type="submit" class="btn btn-success">Proses Klaim Makan</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div class="audio-test-bar">
+                        <span>Uji Bunyi Web Audio API:</span>
+                        <button type="button" class="btn btn-xs btn-outline" data-beep="success">Beep Sukses</button>
+                        <button type="button" class="btn btn-xs btn-outline" data-beep="quota_exceeded">Beep Kuota Habis</button>
+                        <button type="button" class="btn btn-xs btn-outline" data-beep="denied">Beep Ditolak</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Hasil Verifikasi &amp; Kuota Makan Harian (Maks 3x)</h3>
+                        <span id="scanResultBadge" class="badge badge-neutral">Menunggu Scan</span>
+                    </div>
+
+                    <div id="scanResultPanel" class="scan-result-panel">
+                        <p id="scanResultMessage" class="scan-message">
+                            Silakan scan QR Code warga atau masukkan NIK untuk memvalidasi hak klaim makanan di posko aktif.
+                        </p>
+
+                        <div class="meal-dots-wrapper">
+                            <span class="meal-dots-label">Status Kuota Makan Hari Ini:</span>
+                            <div id="mealDotsContainer" class="meal-dots">
+                                <div class="meal-dot" data-seq="1"><span>1/3</span><small>Pagi</small></div>
+                                <div class="meal-dot" data-seq="2"><span>2/3</span><small>Siang</small></div>
+                                <div class="meal-dot" data-seq="3"><span>3/3</span><small>Malam</small></div>
+                            </div>
+                        </div>
+
+                        <div id="scanResidentDetail" class="scan-resident-detail hidden"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 2: Registrasi Warga Baru -->
+        <section id="tab-register" class="tab-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Form Registrasi Warga Pengungsi &amp; Rekam Wajah 3 Sudut (LBPH)</h3>
+                    <span class="badge badge-info">Anti-Cross-Posko Lockout</span>
+                </div>
+
+                <div id="registerAlertBox" class="alert-box hidden" role="alert"></div>
+
+                <form id="registerResidentForm" class="register-form">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="regFullName">Nama Lengkap Warga *</label>
+                            <input type="text" id="regFullName" name="full_name" placeholder="Masukkan nama sesuai KTP/KK" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="regPoskoCode">Posko Domisili *</label>
+                            <select id="regPoskoCode" name="posko_code" required></select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="regNik">NIK (Opsional — Kosongkan jika tanpa KTP)</label>
+                            <input type="text" id="regNik" name="nik" placeholder="16 digit NIK (otomatis NO-NIK-xxxx bila kosong)">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="regKkName">Nama Kepala Keluarga</label>
+                            <input type="text" id="regKkName" name="kk_name" placeholder="Nama Kepala Keluarga (KK)">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="regAge">Umur (Tahun) *</label>
+                            <input type="number" id="regAge" name="age" min="0" max="150" value="30" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="regGender">Jenis Kelamin *</label>
+                            <select id="regGender" name="gender" required>
+                                <option value="L">Laki-laki (L)</option>
+                                <option value="P">Perempuan (P)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 3-Angle Face Capture -->
+                    <div class="face-capture-section">
+                        <div class="face-capture-header">
+                            <div>
+                                <h4>Pengambilan Foto Wajah 3 Sudut (Depan, Kiri, Kanan)</h4>
+                                <p>Gunakan kamera webcam langsung atau unggah file foto untuk pelatihan pengenalan wajah LBPH.</p>
+                            </div>
+                            <div class="webcam-controls">
+                                <button type="button" id="toggleWebcamBtn" class="btn btn-sm btn-primary">Nyalakan Webcam</button>
+                            </div>
+                        </div>
+
+                        <div id="webcamStage" class="webcam-stage hidden">
+                            <video id="webcamVideo" autoplay playsinline muted></video>
+                        </div>
+
+                        <div class="angles-grid">
+                            <!-- Front -->
+                            <div class="angle-card">
+                                <h5>1. Wajah Depan / Tengah</h5>
+                                <canvas id="canvasFront" width="320" height="240" class="angle-canvas"></canvas>
+                                <div class="angle-actions">
+                                    <button type="button" class="btn btn-sm btn-secondary capture-angle-btn" data-angle="front">
+                                        Ambil Foto Depan
+                                    </button>
+                                    <label class="btn btn-sm btn-outline file-label">
+                                        Upload File
+                                        <input type="file" id="fileFront" accept="image/*" data-angle="front" class="angle-file-input">
+                                    </label>
+                                </div>
+                                <small id="statusFront" class="angle-status">Belum ada foto depan</small>
+                            </div>
+
+                            <!-- Left -->
+                            <div class="angle-card">
+                                <h5>2. Wajah Samping Kiri</h5>
+                                <canvas id="canvasLeft" width="320" height="240" class="angle-canvas"></canvas>
+                                <div class="angle-actions">
+                                    <button type="button" class="btn btn-sm btn-secondary capture-angle-btn" data-angle="left">
+                                        Ambil Foto Kiri
+                                    </button>
+                                    <label class="btn btn-sm btn-outline file-label">
+                                        Upload File
+                                        <input type="file" id="fileLeft" accept="image/*" data-angle="left" class="angle-file-input">
+                                    </label>
+                                </div>
+                                <small id="statusLeft" class="angle-status">Belum ada foto kiri</small>
+                            </div>
+
+                            <!-- Right -->
+                            <div class="angle-card">
+                                <h5>3. Wajah Samping Kanan</h5>
+                                <canvas id="canvasRight" width="320" height="240" class="angle-canvas"></canvas>
+                                <div class="angle-actions">
+                                    <button type="button" class="btn btn-sm btn-secondary capture-angle-btn" data-angle="right">
+                                        Ambil Foto Kanan
+                                    </button>
+                                    <label class="btn btn-sm btn-outline file-label">
+                                        Upload File
+                                        <input type="file" id="fileRight" accept="image/*" data-angle="right" class="angle-file-input">
+                                    </label>
+                                </div>
+                                <small id="statusRight" class="angle-status">Belum ada foto kanan</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-submit-row">
+                        <button type="submit" class="btn btn-success btn-lg">Simpan &amp; Terbitkan Digital ID QR</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- TAB 3: Cetak Digital ID QR -->
+        <section id="tab-cards" class="tab-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Direktori Warga &amp; Cetak Kartu Digital ID QR</h3>
+                    <div class="search-filter-bar">
+                        <input
+                            type="search"
+                            id="residentSearchInput"
+                            placeholder="Cari Nama, NIK, KK, atau Token QR..."
+                            aria-label="Cari Warga"
+                        >
+                        <select id="residentPoskoFilter" aria-label="Filter Posko">
+                            <option value="">Semua Posko</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="residentsCardGrid" class="id-cards-grid">
+                    <div class="empty-state">Memuat data kartu digital warga...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 4: Manajemen Stok & Posko -->
+        <section id="tab-posko" class="tab-panel" role="tabpanel">
+            <div class="grid-posko-layout">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Tambah Posko Pengungsian Baru</h3>
+                    </div>
+                    <form id="addPoskoForm" class="posko-form">
+                        <div class="form-group">
+                            <label for="poskoCodeInput">Kode Posko *</label>
+                            <input type="text" id="poskoCodeInput" placeholder="Contoh: POSKO-D" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="poskoNameInput">Nama Posko *</label>
+                            <input type="text" id="poskoNameInput" placeholder="Contoh: Posko Lapangan Timur" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="poskoLocationInput">Lokasi Detail *</label>
+                            <input type="text" id="poskoLocationInput" placeholder="Contoh: Jl. Merdeka No. 10" required>
+                        </div>
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label for="poskoInitialMeals">Stok Awal Makanan (Porsi)</label>
+                                <input type="number" id="poskoInitialMeals" min="0" value="100" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="poskoMinMealAlert">Batas Alert Makanan</label>
+                                <input type="number" id="poskoMinMealAlert" min="0" value="20" required>
+                            </div>
+                        </div>
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label for="poskoInitialGallons">Stok Awal Galon Air</label>
+                                <input type="number" id="poskoInitialGallons" min="0" value="15" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="poskoMinGallonAlert">Batas Alert Galon</label>
+                                <input type="number" id="poskoMinGallonAlert" min="0" value="5" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">Tambah Posko Baru</button>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Daftar Posko, Valuasi Logistik &amp; Kontrol Stok</h3>
+                    </div>
+                    <div id="poskoManagementGrid" class="posko-cards-list">
+                        <div class="empty-state">Memuat daftar posko...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 5: Log Riwayat Distribusi -->
+        <section id="tab-logs" class="tab-panel" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Log Riwayat Distribusi Makanan &amp; Galon Air</h3>
+                    <div class="log-filters" role="group" aria-label="Filter Status Log">
+                        <button type="button" class="btn btn-xs btn-filter active" data-status="ALL">ALL</button>
+                        <button type="button" class="btn btn-xs btn-filter" data-status="SUCCESS">SUCCESS</button>
+                        <button type="button" class="btn btn-xs btn-filter" data-status="GALLON_USE">GALLON_USE</button>
+                        <button type="button" class="btn btn-xs btn-filter" data-status="DENIED_WRONG_POSKO">DENIED_WRONG_POSKO</button>
+                        <button type="button" class="btn btn-xs btn-filter" data-status="DENIED_EXCEEDED">DENIED_EXCEEDED</button>
+                        <button type="button" class="btn btn-xs btn-filter" data-status="DENIED_NO_STOCK">DENIED_NO_STOCK</button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="logs-table">
+                        <thead>
+                            <tr>
+                                <th>Waktu</th>
+                                <th>Warga / Item</th>
+                                <th>NIK</th>
+                                <th>Posko Scanner</th>
+                                <th>Posko Domisili</th>
+                                <th>Status</th>
+                                <th>Porsi Ke</th>
+                                <th>Biaya (Rp)</th>
+                                <th>Catatan</th>
+                            </tr>
+                        </thead>
+                        <tbody id="distributionLogsTableBody">
+                            <tr>
+                                <td colspan="9" class="empty-cell">Memuat riwayat distribusi...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Restock Meals Modal -->
+    <div id="restockMealsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <h4>Restock Porsi Makanan (<span id="restockMealsPoskoLabel"></span>)</h4>
+            <form id="restockMealsForm">
+                <input type="hidden" id="restockMealsPoskoCode">
+                <div class="form-group">
+                    <label for="restockMealsAmount">Tambah Porsi Makanan (+N Porsi)</label>
+                    <input type="number" id="restockMealsAmount" min="0" value="50" required>
+                </div>
+                <div class="form-group">
+                    <label for="restockMealsMinAlert">Batas Minimum Peringatan (min_stock_alert)</label>
+                    <input type="number" id="restockMealsMinAlert" min="0" value="20" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline close-modal-btn" data-modal="restockMealsModal">Batal</button>
+                    <button type="submit" class="btn btn-success">Simpan Restock Makanan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Restock Gallons Modal -->
+    <div id="restockGallonsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <h4>Restock Galon Air (<span id="restockGallonsPoskoLabel"></span>)</h4>
+            <form id="restockGallonsForm">
+                <input type="hidden" id="restockGallonsPoskoCode">
+                <div class="form-group">
+                    <label for="restockGallonsAmount">Tambah Galon Air (+N Galon)</label>
+                    <input type="number" id="restockGallonsAmount" min="0" value="10" required>
+                </div>
+                <div class="form-group">
+                    <label for="restockGallonsMinAlert">Batas Minimum Peringatan (min_gallon_alert)</label>
+                    <input type="number" id="restockGallonsMinAlert" min="0" value="5" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline close-modal-btn" data-modal="restockGallonsModal">Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan Restock Galon</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Token Modal -->
+    <div id="adminTokenModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <h4>Konfigurasi X-Admin-Token</h4>
+            <p class="modal-desc">Token ini dikirim sebagai header <code>X-Admin-Token</code> untuk operasi admin (Restock, Tambah/Hapus Posko, Hapus Warga, Sync Kamera).</p>
+            <form id="adminTokenForm">
+                <div class="form-group">
+                    <label for="adminTokenInput">Admin Secret Token</label>
+                    <input type="password" id="adminTokenInput" value="posko-secret-admin-2026" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline close-modal-btn" data-modal="adminTokenModal">Tutup</button>
+                    <button type="submit" class="btn btn-primary">Simpan Token</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Printable ID Card Area (only visible during print or modal preview) -->
+    <div id="printableCardContainer" class="printable-card-container"></div>
+</body>
+</html>

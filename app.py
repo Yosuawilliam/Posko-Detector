@@ -2,11 +2,13 @@ import io
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import qrcode
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -57,6 +59,25 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+TEMPLATES_DIR = BASE_DIR / "templates"
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+def read_index_dashboard() -> HTMLResponse:
+    index_path = TEMPLATES_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template index.html tidak ditemukan",
+        )
+    return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+
 
 
 class PoskoCreateRequest(BaseModel):

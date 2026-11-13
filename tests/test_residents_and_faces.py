@@ -225,3 +225,81 @@ def test_face_recognition_service_anti_traversal_and_training(tmp_path: Path):
     # Delete resident photos cleans directory
     svc.delete_resident_photos(99, "../../../etc/passwd")
     assert not (svc.base_dir / Path(paths["front"]).parent.name).exists()
+
+
+def test_create_resident_validation_and_invalid_base64_handling(
+    client: TestClient, isolated_known_faces
+):
+    from face_recog import FaceRecognitionService
+
+    # Direct unit check on _decode_image_bytes invalid base64
+    with pytest.raises(ValueError, match="Invalid base64 image data"):
+        FaceRecognitionService._decode_image_bytes("not-valid-base64!!!")
+
+    with pytest.raises(ValueError, match="Invalid base64 image data"):
+        FaceRecognitionService._decode_image_bytes("data:image/jpeg;base64,abc")
+
+    # 1. JSON branch Pydantic ValidationError -> 422
+    bad_json_age = client.post(
+        "/api/residents",
+        json={
+            "nik": "32014444",
+            "full_name": "Warga Invalid Umur",
+            "age": 200,
+            "gender": "L",
+            "posko_code": "POSKO-A",
+        },
+    )
+    assert bad_json_age.status_code == 422
+
+    bad_json_name = client.post(
+        "/api/residents",
+        json={
+            "nik": "32014445",
+            "full_name": "",
+            "age": 25,
+            "gender": "L",
+            "posko_code": "POSKO-A",
+        },
+    )
+    assert bad_json_name.status_code == 422
+
+    # 2. Multipart form branch age validation (0 <= age <= 150) -> 422
+    for invalid_age in ("-1", "151", "bukan-angka"):
+        mp_bad_age = client.post(
+            "/api/residents",
+            data={
+                "nik": "32014446",
+                "full_name": "Warga Form Invalid",
+                "age": invalid_age,
+                "gender": "P",
+                "posko_code": "POSKO-A",
+            },
+        )
+        assert mp_bad_age.status_code == 422
+        assert mp_bad_age.json()["detail"] == "Umur harus antara 0 dan 150"
+
+    # 3. Invalid base64 photo in POST /api/residents -> 400 + rollback + cleanup partial files
+    valid_b64 = _make_dummy_jpeg_b64()
+    bad_photo_res = client.post(
+        "/api/residents",
+        json={
+            "nik": "32019900",
+            "full_name": "Warga Base64 Rusak",
+            "age": 33,
+            "gender": "L",
+            "posko_code": "POSKO-A",
+            "photo_front": valid_b64,
+            "photo_left": "data:image/jpeg;base64,!!!corrupted_base64!!!",
+        },
+    )
+    assert bad_photo_res.status_code == 400
+    assert "Invalid base64 image data" in bad_photo_res.json()["detail"]
+
+    # Ensure DB rolled back and no partial resident or directory remains
+    residents = client.get("/api/residents?search=32019900").json()
+    assert residents == []
+    leftover_dirs = [
+        d for d in isolated_known_faces.base_dir.iterdir() if d.is_dir() and "32019900" in d.name
+    ]
+    assert leftover_dirs == []

@@ -121,3 +121,25 @@ def test_escape_html_prevents_xss(client: TestClient):
         assert re.search(r'\.replace\(/>/g,\s*["\']&gt;["\']\)', js_code)
         assert re.search(r'\.replace\(/\\?"/g,\s*["\']&quot;["\']\)', js_code)
         assert re.search(r"\.replace\(/\\?'/g,\s*[\"']&#0?39;[\"']\)", js_code)
+
+
+def test_frontend_photo_url_normalization_and_tent_quick_actions(client: TestClient):
+    res_js = client.get("/static/js/app.js")
+    assert res_js.status_code == 200
+    js = res_js.text
+
+    # 1. No double leading slash (`/${escapeHTML(r.face_front_path)}`) in resident cards
+    assert "`/${escapeHTML(r.face_front_path)}`" not in js
+    assert 'rawPhotoPath.startsWith("/")' in js
+
+    # 2. Tent Monitor stores detectedResidentIds & detectedPersonCount and passes them in triggerDetectorAction
+    assert "appState.detectedResidentIds = recognized.map((r) => r.id).filter(Boolean)" in js
+    assert "appState.detectedPersonCount = det.person_count || 0" in js
+    assert "detected_resident_ids: appState.detectedResidentIds || []" in js
+    assert "person_count: appState.detectedPersonCount || 0" in js
+
+    # 3. Post-registration canvas clear & status reset + 3-second polling interval
+    assert "clearRect" in js
+    assert '"Belum diambil"' in js
+    assert "setInterval(" in js
+    assert "3000" in js

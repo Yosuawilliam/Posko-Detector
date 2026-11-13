@@ -1,4 +1,5 @@
 import base64
+import binascii
 import io
 import logging
 import re
@@ -96,8 +97,13 @@ class FaceRecognitionService:
             if not stripped:
                 return None
             if stripped.startswith("data:") and "," in stripped:
-                stripped = stripped.split(",", 1)[1]
-            raw_bytes = base64.b64decode(stripped)
+                stripped = stripped.split(",", 1)[1].strip()
+            try:
+                raw_bytes = base64.b64decode(re.sub(r"\s+", "", stripped), validate=True)
+                if not raw_bytes:
+                    raise ValueError("Empty base64 image data")
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("Invalid base64 image data") from exc
         else:
             return None
 
@@ -138,14 +144,19 @@ class FaceRecognitionService:
             "right": None,
         }
 
-        for angle, raw_input in angle_inputs.items():
-            img_bytes = self._decode_image_bytes(raw_input)
-            if img_bytes is None:
-                continue
-            resident_dir.mkdir(parents=True, exist_ok=True)
-            file_path = self._ensure_safe_path(resident_dir / f"{angle}.jpg")
-            file_path.write_bytes(img_bytes)
-            saved_paths[angle] = f"/known_faces/{resident_dir.name}/{angle}.jpg"
+        try:
+            for angle, raw_input in angle_inputs.items():
+                img_bytes = self._decode_image_bytes(raw_input)
+                if img_bytes is None:
+                    continue
+                resident_dir.mkdir(parents=True, exist_ok=True)
+                file_path = self._ensure_safe_path(resident_dir / f"{angle}.jpg")
+                file_path.write_bytes(img_bytes)
+                saved_paths[angle] = f"/known_faces/{resident_dir.name}/{angle}.jpg"
+        except Exception:
+            if resident_dir.exists() and resident_dir.is_dir():
+                shutil.rmtree(resident_dir, ignore_errors=True)
+            raise
 
         return saved_paths
 

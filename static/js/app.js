@@ -70,6 +70,8 @@ const appState = {
     poskos: [],
     residents: [],
     currentLogStatusFilter: "ALL",
+    detectedResidentIds: [],
+    detectedPersonCount: 0,
     capturedAngles: {
         front: null,
         left: null,
@@ -287,6 +289,8 @@ function renderTentMonitor(det) {
         : Array.isArray(det.detected_residents)
         ? det.detected_residents
         : [];
+    appState.detectedResidentIds = recognized.map((r) => r.id).filter(Boolean);
+    appState.detectedPersonCount = det.person_count || 0;
 
     if (listEl) {
         if (recognized.length === 0) {
@@ -318,8 +322,8 @@ async function triggerDetectorAction(actionName) {
         adminAuth: true,
         body: {
             active_posko: appState.activePosko,
-            person_count: Number(document.getElementById("tentPersonCount")?.textContent || 0),
-            detected_resident_ids: [],
+            person_count: appState.detectedPersonCount || 0,
+            detected_resident_ids: appState.detectedResidentIds || [],
             action: actionName,
         },
     });
@@ -581,6 +585,16 @@ async function handleRegisterResident(e) {
         }
         document.getElementById("registerResidentForm")?.reset();
         appState.capturedAngles = { front: null, left: null, right: null };
+        ["Front", "Left", "Right"].forEach((capName) => {
+            const canvas = document.getElementById(`canvas${capName}`);
+            if (canvas) {
+                canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+            }
+            const statusEl = document.getElementById(`status${capName}`);
+            if (statusEl) {
+                statusEl.textContent = "Belum diambil";
+            }
+        });
         await loadPoskosAndSummary();
         await loadResidents();
     } else {
@@ -625,8 +639,14 @@ function renderResidentsGrid() {
 
     grid.innerHTML = appState.residents
         .map((r) => {
-            const photoUrl = r.face_front_path
-                ? `/${escapeHTML(r.face_front_path)}`
+            const rawPhotoPath = r.face_front_path ? String(r.face_front_path).trim() : "";
+            const normalizedPhotoPath = rawPhotoPath
+                ? rawPhotoPath.startsWith("/")
+                    ? rawPhotoPath
+                    : "/" + rawPhotoPath
+                : "";
+            const photoUrl = normalizedPhotoPath
+                ? escapeHTML(normalizedPhotoPath)
                 : `https://ui-avatars.com/api/?name=${encodeURIComponent(r.full_name || "W")}&background=1e293b&color=f8fafc`;
             const qrUrl = `/api/residents/qr/${encodeURIComponent(r.qr_token)}`;
             const meals = Number(r.today_meals || 0);
@@ -697,6 +717,15 @@ function printResidentIdCard(residentId) {
     const container = document.getElementById("printableCardContainer");
     if (!container) return;
 
+    const rawPhotoPath = r.face_front_path ? String(r.face_front_path).trim() : "";
+    const normalizedPhotoPath = rawPhotoPath
+        ? rawPhotoPath.startsWith("/")
+            ? rawPhotoPath
+            : "/" + rawPhotoPath
+        : "";
+    const photoUrl = normalizedPhotoPath
+        ? escapeHTML(normalizedPhotoPath)
+        : `https://ui-avatars.com/api/?name=${encodeURIComponent(r.full_name || "W")}&background=1e293b&color=f8fafc`;
     const qrUrl = `/api/residents/qr/${encodeURIComponent(r.qr_token)}`;
     container.innerHTML = `
         <div class="print-id-sheet">
@@ -705,6 +734,9 @@ function printResidentIdCard(residentId) {
                 r.posko_code
             )}</strong></p>
             <hr style="margin-bottom: 12px;">
+            <div style="text-align: center; margin-bottom: 10px;">
+                <img src="${photoUrl}" alt="Foto ${escapeHTML(r.full_name)}" style="width: 72px; height: 72px; object-fit: cover; border-radius: 8px;">
+            </div>
             <p><strong>Nama Lengkap:</strong> ${escapeHTML(r.full_name)}</p>
             <p><strong>NIK:</strong> ${escapeHTML(r.nik)}</p>
             <p><strong>Umur / JK:</strong> ${escapeHTML(r.age)} Tahun / ${escapeHTML(r.gender)}</p>
@@ -1098,4 +1130,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadPoskosAndSummary();
     loadResidents();
     loadLogs();
+    setInterval(() => {
+        loadPoskosAndSummary();
+    }, 3000);
 });

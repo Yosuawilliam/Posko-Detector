@@ -60,11 +60,11 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
 def _ensure_mysql_database_exists() -> None:
-    safe_db_name = re.sub(r"[^A-Za-z0-9_]", "_", MYSQL_DB)
-    encoded_user = quote_plus(MYSQL_USER)
-    encoded_password = quote_plus(MYSQL_PASSWORD)
-    auth_part = f"{encoded_user}:{encoded_password}" if MYSQL_PASSWORD else encoded_user
-    server_url = f"mysql+pymysql://{auth_part}@{MYSQL_HOST}:{MYSQL_PORT}/?charset=utf8mb4"
+    target_db = engine.url.database or MYSQL_DB
+    safe_db_name = re.sub(r"[^A-Za-z0-9_]", "_", target_db)
+    server_url = engine.url.set(database=None)
+    if server_url.database:
+        server_url = server_url.set(database="")
     server_engine = create_engine(server_url, pool_pre_ping=True)
     try:
         with server_engine.connect() as conn:

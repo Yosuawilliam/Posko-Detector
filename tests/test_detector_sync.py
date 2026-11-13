@@ -203,3 +203,24 @@ def test_detector_sync_and_quick_actions(client: TestClient):
     rel_b = reload_res.json()
     assert rel_b["action_result"]["action"] == "reload_faces"
     assert isinstance(rel_b["action_result"]["trained"], bool)
+    # Preserves existing detected_residents for POSKO-B when UI quick action omits IDs
+    assert len(rel_b["detected_residents"]) == 1
+    assert rel_b["detected_residents"][0]["id"] == r_b["id"]
+
+    # 6. UI Quick Action serve_all with empty detected_resident_ids uses existing detector_state
+    ui_serve_res = client.post(
+        "/api/detector/sync",
+        json={
+            "active_posko": "POSKO-B",
+            "person_count": 0,
+            "detected_resident_ids": [],
+            "action": "serve_all",
+        },
+        headers=headers,
+    )
+    assert ui_serve_res.status_code == 200
+    ui_sb = ui_serve_res.json()
+    assert ui_sb["action_result"]["action"] == "serve_all"
+    assert ui_sb["action_result"]["served_count"] == 1
+    assert ui_sb["detected_residents"][0]["id"] == r_b["id"]
+    assert ui_sb["detected_residents"][0]["today_meals"] == 1

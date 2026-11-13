@@ -9,7 +9,7 @@ import qrcode
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -556,7 +556,18 @@ async def create_resident(
 
     if "application/json" in content_type:
         body = await request.json()
-        payload = ResidentCreateRequest(**body)
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Payload JSON harus berupa objek",
+            )
+        try:
+            payload = ResidentCreateRequest(**body)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=exc.errors(),
+            ) from exc
         raw_nik = payload.nik or ""
         full_name = payload.full_name.strip()
         age = payload.age
@@ -580,8 +591,13 @@ async def create_resident(
         except (TypeError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Umur warga harus berupa angka",
+                detail="Umur harus antara 0 dan 150",
             ) from exc
+        if not (0 <= age <= 150):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Umur harus antara 0 dan 150",
+            )
         gender = str(form.get("gender") or "").strip().upper()
         kk_raw = form.get("kk_name")
         kk_name = str(kk_raw).strip() if kk_raw else None
@@ -638,13 +654,22 @@ async def create_resident(
     db.add(resident)
     db.flush()
 
-    saved_paths = face_service.save_three_angle_photos(
-        resident_id=resident.id,
-        nik=clean_nik,
-        front_data=photo_front,
-        left_data=photo_left,
-        right_data=photo_right,
-    )
+    try:
+        saved_paths = face_service.save_three_angle_photos(
+            resident_id=resident.id,
+            nik=clean_nik,
+            front_data=photo_front,
+            left_data=photo_left,
+            right_data=photo_right,
+        )
+    except ValueError as exc:
+        face_service.delete_resident_photos(resident.id, clean_nik)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     resident.face_front_path = saved_paths["front"]
     resident.face_left_path = saved_paths["left"]
     resident.face_right_path = saved_paths["right"]
@@ -945,6 +970,20 @@ def sync_detector(
 
     action_result: dict[str, Any] | None = None
     action_name = payload.action.strip().lower() if payload.action else None
+    effective_person_count = int(payload.person_count)
+
+    if (
+        not unique_ids
+        and action_name
+        and detector_state.get("active_posko") == active_posko
+        and detector_state.get("detected_residents")
+    ):
+        for existing_res in detector_state.get("detected_residents", []):
+            rid = existing_res.get("id") if isinstance(existing_res, dict) else None
+            if rid is not None and int(rid) not in unique_ids:
+                unique_ids.append(int(rid))
+        if effective_person_count == 0 and detector_state.get("person_count", 0) > 0:
+            effective_person_count = int(detector_state.get("person_count", 0))
 
     if action_name == "switch_posko":
         codes = [p.code for p in poskos]
@@ -1079,7 +1118,7 @@ def sync_detector(
     detector_state["online"] = True
     detector_state["yolo_camera_online"] = True
     detector_state["active_posko"] = active_posko
-    detector_state["person_count"] = int(payload.person_count)
+    detector_state["person_count"] = effective_person_count
     detector_state["detected_residents"] = detected_residents
     detector_state["recognized_residents"] = detected_residents
     detector_state["last_sync"] = now_iso
@@ -1088,7 +1127,7 @@ def sync_detector(
         "detector_online": True,
         "online": True,
         "active_posko": active_posko,
-        "person_count": int(payload.person_count),
+        "person_count": effective_person_count,
         "detected_residents": detected_residents,
         "action_result": action_result,
         "posko_summary": posko_summary,

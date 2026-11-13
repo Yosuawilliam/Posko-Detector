@@ -95,3 +95,49 @@ def test_init_db_seeds_default_poskos(monkeypatch):
         assert poskos[1].min_stock_alert == 20
         assert poskos[1].stock_gallons == 15
         assert poskos[1].min_gallon_alert == 5
+
+
+def test_ensure_mysql_database_exists_uses_engine_url(monkeypatch):
+    from sqlalchemy.engine import make_url
+
+    captured = {}
+
+    class DummyConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        def execute(self, stmt):
+            captured["sql"] = str(stmt)
+
+        def commit(self):
+            captured["committed"] = True
+
+    class DummyServerEngine:
+        def connect(self):
+            return DummyConn()
+
+        def dispose(self):
+            captured["disposed"] = True
+
+    class DummyEngine:
+        url = make_url("mysql+pymysql://custom_user:secret_pass@db.example.local:3307/custom_posko_db")
+
+    def fake_create_engine(url, **kwargs):
+        captured["server_url"] = url
+        return DummyServerEngine()
+
+    monkeypatch.setattr(database, "engine", DummyEngine())
+    monkeypatch.setattr(database, "create_engine", fake_create_engine)
+
+    database._ensure_mysql_database_exists()
+
+    assert not captured["server_url"].database
+    assert captured["server_url"].username == "custom_user"
+    assert captured["server_url"].host == "db.example.local"
+    assert captured["server_url"].port == 3307
+    assert "CREATE DATABASE IF NOT EXISTS `custom_posko_db`" in captured["sql"]
+    assert captured["committed"] is True
+    assert captured["disposed"] is True

@@ -1,19 +1,19 @@
 :root {
-    --bg-body: #0f172a;
-    --bg-card: #1e293b;
-    --bg-card-alt: #263349;
-    --border-color: #334155;
-    --text-main: #f8fafc;
-    --text-muted: #94a3b8;
-    --primary: #3b82f6;
-    --primary-hover: #2563eb;
+    --bg-body: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-alt: #f1f5f9;
+    --border-color: #cbd5e1;
+    --text-main: #0f172a;
+    --text-muted: #475569;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
     --success: #10b981;
-    --success-bg: rgba(16, 185, 129, 0.15);
+    --success-bg: rgba(16, 185, 129, 0.14);
     --warning: #f59e0b;
     --warning-bg: rgba(245, 158, 11, 0.16);
     --danger: #ef4444;
-    --danger-bg: rgba(239, 68, 68, 0.18);
-    --info: #06b6d4;
+    --danger-bg: rgba(239, 68, 68, 0.14);
+    --info: #0891b2;
     --radius: 10px;
 }
 
@@ -135,7 +135,7 @@ select {
     border-radius: 999px;
     font-size: 0.8rem;
     font-weight: 600;
-    color: #34d399;
+    color: #047857;
 }
 
 .dot {
@@ -228,38 +228,38 @@ select {
 .badge-safe,
 .badge-success {
     background-color: var(--success-bg);
-    color: #34d399;
-    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #047857;
+    border: 1px solid rgba(16, 185, 129, 0.45);
 }
 
 .badge-warning {
     background-color: var(--warning-bg);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.45);
 }
 
 .badge-danger {
     background-color: var(--danger-bg);
-    color: #f87171;
+    color: #b91c1c;
     border: 1px solid rgba(239, 68, 68, 0.45);
 }
 
 .badge-info {
-    background-color: rgba(6, 182, 212, 0.16);
-    color: #22d3ee;
+    background-color: rgba(6, 182, 212, 0.14);
+    color: #0e7490;
     border: 1px solid rgba(6, 182, 212, 0.4);
 }
 
 .badge-primary {
-    background-color: rgba(59, 130, 246, 0.18);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.4);
+    background-color: rgba(37, 99, 235, 0.12);
+    color: #1d4ed8;
+    border: 1px solid rgba(37, 99, 235, 0.35);
 }
 
 .badge-neutral {
-    background-color: rgba(148, 163, 184, 0.15);
+    background-color: #f1f5f9;
     color: var(--text-muted);
-    border: 1px solid rgba(148, 163, 184, 0.3);
+    border: 1px solid var(--border-color);
 }
 
 /* Live Camera Tent Monitor */
@@ -301,8 +301,28 @@ select {
 
 .tent-quick-actions {
     display: flex;
+    align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.tent-inline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    background-color: var(--bg-body);
+    border: 1px solid var(--border-color);
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.tent-inline-toggle input[type="checkbox"] {
+    accent-color: var(--primary);
+    cursor: pointer;
 }
 
 .tent-monitor-body {
@@ -310,6 +330,30 @@ select {
     grid-template-columns: 220px 1fr;
     gap: 16px;
 }
+
+.tent-monitor-body.has-video {
+    grid-template-columns: 340px 180px 1fr;
+}
+
+.tent-video-box {
+    background-color: #ffffff;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+}
+
+.tent-live-stream-img {
+    width: 100%;
+    height: auto;
+    max-height: 240px;
+    object-fit: contain;
+    display: block;
+}
+
 
 .tent-stat-box {
     background-color: var(--bg-body);
@@ -610,13 +654,13 @@ select {
 .meal-dot.claimed {
     border-color: var(--success);
     background-color: var(--success-bg);
-    color: #34d399;
+    color: #047857;
 }
 
 .meal-dot.exceeded {
     border-color: var(--danger);
     background-color: var(--danger-bg);
-    color: #f87171;
+    color: #b91c1c;
 }
 
 .scan-resident-detail {
@@ -665,13 +709,13 @@ select {
 .alert-box.error {
     background-color: var(--danger-bg);
     border: 1px solid var(--danger);
-    color: #fca5a5;
+    color: #b91c1c;
 }
 
 .alert-box.success {
     background-color: var(--success-bg);
     border: 1px solid var(--success);
-    color: #6ee7b7;
+    color: #047857;
 }
 
 .face-capture-section {
@@ -710,7 +754,7 @@ select {
     max-width: 420px;
     border-radius: 8px;
     border: 2px solid var(--primary);
-    background: #000;
+    background: #ffffff;
 }
 
 .angles-grid {
@@ -736,7 +780,7 @@ select {
     width: 100%;
     max-width: 240px;
     height: 160px;
-    background-color: #090d16;
+    background-color: #ffffff;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     margin-bottom: 8px;
@@ -884,7 +928,7 @@ select {
 .progress-track {
     width: 100%;
     height: 10px;
-    background-color: var(--bg-body);
+    background-color: #e2e8f0;
     border-radius: 999px;
     overflow: hidden;
     margin: 8px 0;
@@ -943,7 +987,7 @@ select {
 .logs-table th {
     color: var(--text-muted);
     font-weight: 600;
-    background-color: var(--bg-body);
+    background-color: #f8fafc;
 }
 
 .empty-cell,
@@ -959,7 +1003,7 @@ select {
 .modal-backdrop {
     position: fixed;
     inset: 0;
-    background-color: rgba(0, 0, 0, 0.72);
+    background-color: rgba(15, 23, 42, 0.35);
     display: flex;
     align-items: center;
     justify-content: center;

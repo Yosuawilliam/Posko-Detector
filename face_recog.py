@@ -21,7 +21,7 @@ class FaceRecognitionService:
     def __init__(
         self,
         base_dir: Path | str = KNOWN_FACES_DIR,
-        confidence_threshold: float = 85.0,
+        confidence_threshold: float = 135.0,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -30,11 +30,15 @@ class FaceRecognitionService:
         self._lock = threading.Lock()
 
         cascade_data = getattr(cv2, "data", None)
+        local_cascade = Path(__file__).resolve().parent / "haarcascade_frontalface_default.xml"
         cascade_file = (
             Path(cascade_data.haarcascades) / "haarcascade_frontalface_default.xml"
             if cascade_data is not None and hasattr(cascade_data, "haarcascades")
-            else Path("haarcascade_frontalface_default.xml")
+            else local_cascade
         )
+        if not cascade_file.exists() and local_cascade.exists():
+            cascade_file = local_cascade
+
         if cascade_file.exists():
             self.face_cascade = cv2.CascadeClassifier(str(cascade_file))
         else:
@@ -42,12 +46,21 @@ class FaceRecognitionService:
 
         self._recognizer = self._create_recognizer()
         self._is_trained = False
-        if self.model_path.exists() and self._recognizer is not None:
-            try:
-                self._recognizer.read(str(self._ensure_safe_path(self.model_path)))
+        self._model_mtime: float = 0.0
+        self._reload_model_if_updated()
+
+    def _reload_model_if_updated(self) -> None:
+        if self._recognizer is None or not self.model_path.exists():
+            return
+        try:
+            safe_model = self._ensure_safe_path(self.model_path)
+            mtime = safe_model.stat().st_mtime
+            if not self._is_trained or mtime > self._model_mtime:
+                self._recognizer.read(str(safe_model))
                 self._is_trained = True
-            except Exception as exc:
-                logger.warning("Could not load existing LBPH model: %s", exc)
+                self._model_mtime = mtime
+        except Exception as exc:
+            logger.warning("Could not load existing LBPH model: %s", exc)
 
     @staticmethod
     def _create_recognizer():
@@ -204,7 +217,7 @@ class FaceRecognitionService:
                             self.face_cascade.detectMultiScale(
                                 gray,
                                 scaleFactor=1.1,
-                                minNeighbors=4,
+                                minNeighbors=3,
                                 minSize=(30, 30),
                             )
                             if not self.face_cascade.empty()
@@ -213,11 +226,17 @@ class FaceRecognitionService:
                         if len(detected) > 0:
                             x, y, w, h = max(detected, key=lambda b: b[2] * b[3])
                             face_roi = gray[y : y + h, x : x + w]
-                        else:
-                            face_roi = gray
+                            resized_face = cv2.resize(face_roi, (160, 160))
+                            faces.append(resized_face)
+                            labels.append(resident_id)
+                            faces.append(cv2.equalizeHist(resized_face))
+                            labels.append(resident_id)
 
-                        resized = cv2.resize(face_roi, (160, 160))
-                        faces.append(resized)
+                        # Also train on full/center region for fallback when eyeglasses/backlight prevent tight Haar box
+                        resized_full = cv2.resize(gray, (160, 160))
+                        faces.append(resized_full)
+                        labels.append(resident_id)
+                        faces.append(cv2.equalizeHist(resized_full))
                         labels.append(resident_id)
 
                 if not faces or self._recognizer is None:
@@ -230,6 +249,7 @@ class FaceRecognitionService:
                 safe_model_path = self._ensure_safe_path(self.model_path)
                 self._recognizer.write(str(safe_model_path))
                 self._is_trained = True
+                self._model_mtime = safe_model_path.stat().st_mtime
                 return True
             except Exception as exc:
                 logger.warning("LBPH training failed: %s", exc)
@@ -241,6 +261,52 @@ class FaceRecognitionService:
         thread.start()
         return thread
 
+    def _predict_gray_roi(self, gray_roi: np.ndarray) -> tuple[int | None, float]:
+        if not self._is_trained or self._recognizer is None or gray_roi.size == 0:
+            return (None, 999.0)
+        resized = cv2.resize(gray_roi, (160, 160))
+        lbl1, conf1 = self._recognizer.predict(resized)
+        lbl2, conf2 = self._recognizer.predict(cv2.equalizeHist(resized))
+        if float(conf2) < float(conf1):
+            best_lbl, best_conf = int(lbl2), float(conf2)
+        else:
+            best_lbl, best_conf = int(lbl1), float(conf1)
+        if best_conf <= self.confidence_threshold:
+            return (best_lbl, best_conf)
+        return (None, best_conf)
+
+    def predict_person_crop(self, bgr_crop: np.ndarray) -> tuple[int | None, float]:
+        if bgr_crop is None or bgr_crop.size == 0:
+            return (None, 999.0)
+        if len(bgr_crop.shape) == 3:
+            gray = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = bgr_crop
+
+        with self._lock:
+            self._reload_model_if_updated()
+            if not self._is_trained or self._recognizer is None:
+                return (None, 999.0)
+
+            candidates: list[np.ndarray] = [gray]
+            h_c, w_c = gray.shape[:2]
+            if h_c >= 60 and w_c >= 60:
+                # Upper-center head region inside person bounding box
+                y_end = max(40, int(h_c * 0.7))
+                x_pad = int(w_c * 0.15)
+                head_crop = gray[0:y_end, x_pad : max(x_pad + 40, w_c - x_pad)]
+                if head_crop.size > 0:
+                    candidates.insert(0, head_crop)
+
+            best_rid: int | None = None
+            best_conf: float = 999.0
+            for cand in candidates:
+                rid, conf = self._predict_gray_roi(cand)
+                if conf < best_conf:
+                    best_conf = conf
+                    best_rid = rid
+            return (best_rid, best_conf)
+
     def recognize_faces(self, bgr_frame: np.ndarray) -> list[dict[str, Any]]:
         if bgr_frame is None or bgr_frame.size == 0:
             return []
@@ -250,13 +316,23 @@ class FaceRecognitionService:
         else:
             gray = bgr_frame
 
+        with self._lock:
+            self._reload_model_if_updated()
+
         if not self.face_cascade.empty():
             detected = self.face_cascade.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
-                minNeighbors=5,
+                minNeighbors=4,
                 minSize=(40, 40),
             )
+            if len(detected) == 0:
+                detected = self.face_cascade.detectMultiScale(
+                    cv2.equalizeHist(gray),
+                    scaleFactor=1.08,
+                    minNeighbors=3,
+                    minSize=(40, 40),
+                )
         elif self._is_trained and float(np.std(gray)) > 5.0:
             h_img, w_img = gray.shape[:2]
             detected = [(0, 0, w_img, h_img)] if h_img >= 40 and w_img >= 40 else []
@@ -266,15 +342,8 @@ class FaceRecognitionService:
         results: list[dict[str, Any]] = []
         with self._lock:
             for x, y, w, h in detected:
-                resident_id: int | None = None
-                confidence: float = 999.0
-                if self._is_trained and self._recognizer is not None:
-                    roi = cv2.resize(gray[y : y + h, x : x + w], (160, 160))
-                    label, conf = self._recognizer.predict(roi)
-                    confidence = float(conf)
-                    if confidence <= self.confidence_threshold:
-                        resident_id = int(label)
-
+                roi = gray[y : y + h, x : x + w]
+                resident_id, confidence = self._predict_gray_roi(roi)
                 results.append(
                     {
                         "bbox": (int(x), int(y), int(w), int(h)),

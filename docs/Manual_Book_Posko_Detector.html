@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>Manual Book — SIKARUNA (Sistem Informasi Kemanusiaan, Alokasi, dan Respons Bencana)</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 16mm 16mm 16mm 16mm;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            line-height: 1.55;
+            font-size: 10.5pt;
+        }
+        .cover-banner {
+            border: 2px solid #2563eb;
+            border-radius: 12px;
+            padding: 24px 26px;
+            background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+            margin-bottom: 20px;
+        }
+        .cover-badge {
+            display: inline-block;
+            background: #2563eb;
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 8.5pt;
+            padding: 4px 10px;
+            border-radius: 999px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .cover-banner h1 {
+            font-size: 20pt;
+            font-weight: 800;
+            color: #0f172a;
+            line-height: 1.25;
+            margin-bottom: 6px;
+        }
+        .cover-banner p.subtitle {
+            font-size: 11pt;
+            color: #334155;
+            margin-bottom: 14px;
+        }
+        .cover-meta {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            border-top: 1px solid #cbd5e1;
+            padding-top: 12px;
+            font-size: 9pt;
+            color: #475569;
+        }
+        .cover-meta div strong {
+            color: #0f172a;
+            display: block;
+        }
+        h2.section-title {
+            font-size: 13.5pt;
+            font-weight: 800;
+            color: #1e3a8a;
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 5px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            page-break-after: avoid;
+        }
+        h3.sub-title {
+            font-size: 11.2pt;
+            font-weight: 700;
+            color: #0f172a;
+            margin-top: 12px;
+            margin-bottom: 6px;
+            page-break-after: avoid;
+        }
+        p {
+            margin-bottom: 8px;
+        }
+        .step-list {
+            list-style: none;
+            margin: 8px 0 12px 0;
+        }
+        .step-list li {
+            position: relative;
+            padding: 8px 12px 8px 38px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            page-break-inside: avoid;
+        }
+        .step-list li .step-num {
+            position: absolute;
+            left: 10px;
+            top: 8px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #2563eb;
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 8.5pt;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 20px;
+        }
+        code, .kbd {
+            font-family: Consolas, "Courier New", monospace;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 9.2pt;
+            color: #0f172a;
+        }
+        .info-box {
+            padding: 10px 14px;
+            border-left: 4px solid #2563eb;
+            background: #eff6ff;
+            border-radius: 0 8px 8px 0;
+            margin: 8px 0 12px 0;
+            font-size: 9.8pt;
+            page-break-inside: avoid;
+        }
+        .warn-box {
+            padding: 10px 14px;
+            border-left: 4px solid #d97706;
+            background: #fffbeb;
+            border-radius: 0 8px 8px 0;
+            margin: 8px 0 12px 0;
+            font-size: 9.8pt;
+            page-break-inside: avoid;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 8px 0 14px 0;
+            font-size: 9.5pt;
+            page-break-inside: avoid;
+        }
+        th, td {
+            border: 1px solid #cbd5e1;
+            padding: 7px 10px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: #f1f5f9;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-size: 8pt;
+            font-weight: 700;
+        }
+        .b-green {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #34d399;
+        }
+        .b-red {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #f87171;
+        }
+        .b-yellow {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fbbf24;
+        }
+        .b-blue {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #60a5fa;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 8px 0 12px 0;
+        }
+        .card-mini {
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+        .card-mini h4 {
+            font-size: 10pt;
+            color: #1e3a8a;
+            margin-bottom: 4px;
+        }
+        .page-break {
+            page-break-before: always;
+        }
+        .footer-note {
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #cbd5e1;
+            font-size: 8.5pt;
+            color: #64748b;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- COVER BANNER -->
+    <div class="cover-banner">
+        <span class="cover-badge">MANUAL BOOK &bull; PANDUAN LENGKAP PENGGUNA</span>
+        <h1>SIKARUNA</h1>
+        <p class="subtitle"><strong>Sistem Informasi Kemanusiaan, Alokasi, dan Respons Bencana</strong><br>Panduan Langkah Demi Langkah Penggunaan Web Dashboard, Scan QR Makanan, Akuisisi Wajah 3 Sudut, Manajemen Stok, serta Kamera Tenda AI (YOLO + LBPH)</p>
+        <div class="cover-meta">
+            <div>
+                <strong>Disusun Oleh</strong>
+                Andi Harmoko Arifin
+            </div>
+            <div>
+                <strong>Token Keamanan Admin</strong>
+                <code>posko-secret-admin-2026</code>
+            </div>
+            <div>
+                <strong>Standar Kuota &amp; Biaya</strong>
+                Makan: 3x/hari (Rp 35.000) &bull; Galon: Rp 22.000
+            </div>
+        </div>
+    </div>
+
+    <!-- DAFTAR ISI -->
+    <h2 class="section-title">DAFTAR ISI</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Bab / Bagian Panduan</th>
+                <th style="width: 18%;">Halaman PDF</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td><strong>Halaman Sampul (Cover) &mdash; Andi Harmoko Arifin</strong></td><td>Halaman 1</td></tr>
+            <tr><td><strong>Daftar Isi &amp; Ringkasan Parameter Sistem SIKARUNA</strong></td><td>Halaman 2</td></tr>
+            <tr><td><strong>BAB 1: Navigasi Atas (Navbar), Peringatan Global &amp; 8 Kartu Metrik</strong></td><td>Halaman 3</td></tr>
+            <tr><td><strong>BAB 2: Menggunakan Live Camera Tent Monitor (Sinkronisasi AI)</strong></td><td>Halaman 4</td></tr>
+            <tr><td><strong>BAB 3: Panduan Langkah Demi Langkah 5 Tab Menu Utama</strong></td><td>Halaman 5 &ndash; 6</td></tr>
+            <tr><td><strong>BAB 4: Solusi Cepat Masalah Umum (Troubleshooting)</strong></td><td>Halaman 6</td></tr>
+        </tbody>
+    </table>
+
+    <!-- BAB 1 -->
+    <h2 class="section-title">BAB 1: Navigasi Atas (Navbar), Peringatan Global &amp; 8 Kartu Metrik</h2>
+
+    <div class="grid-2">
+        <div class="card-mini">
+            <h4>1. Pemilih Posko Scanner Aktif (Dropdown Navbar)</h4>
+            <p>Terletak di pojok kanan atas. Gunakan dropdown ini untuk memilih posko tempat Anda bertugas saat ini (contoh: <code>POSKO-A</code> atau <code>POSKO-B</code>). Seluruh metrik stok, klaim QR, dan validasi kamera tenda otomatis menyesuaikan posko yang dipilih.</p>
+        </div>
+        <div class="card-mini">
+            <h4>2. Tombol Token Admin &amp; Global Warning Banner</h4>
+            <p>Klik tombol <code>Token Admin</code> di kanan atas untuk memastikan token <code>posko-secret-admin-2026</code> tersimpan. Jika stok makanan/galon di posko mana pun menipis atau habis, <strong>Banner Peringatan Merah</strong> akan berkedip otomatis di bagian paling atas layar.</p>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 28%;">Nama Kartu Metrik</th>
+                <th>Fungsi &amp; Informasi yang Ditampilkan</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>1. Stok Posko Aktif</strong></td>
+                <td>Menampilkan sisa porsi makanan di posko aktif beserta status: <span class="badge b-green">Stok Aman</span>, <span class="badge b-yellow">STOK MENIPIS</span>, atau <span class="badge b-red">STOK HABIS</span>.</td>
+            </tr>
+            <tr>
+                <td><strong>2. Total Warga Terdaftar</strong></td>
+                <td>Jumlah akumulasi seluruh pengungsi di semua posko serta jumlah warga di posko aktif.</td>
+            </tr>
+            <tr>
+                <td><strong>3. Porsi Terdistribusi (Hari Ini)</strong></td>
+                <td>Total porsi makanan yang sudah berhasil diklaim oleh warga pada hari ini.</td>
+            </tr>
+            <tr>
+                <td><strong>4. Biaya Makanan (Hari Ini)</strong></td>
+                <td>Otomatis menghitung pengeluaran makanan hari ini dengan tarif <strong>Rp 35.000 / porsi</strong>.</td>
+            </tr>
+            <tr>
+                <td><strong>5. Pengeluaran Galon Air (Hari Ini)</strong></td>
+                <td>Otomatis menghitung jumlah galon terpakai hari ini dikalikan tarif <strong>Rp 22.000 / galon</strong>.</td>
+            </tr>
+            <tr>
+                <td><strong>6. Total Pengeluaran (Hari Ini)</strong></td>
+                <td>Gabungan otomatis antara Biaya Makanan + Biaya Galon Air pada hari ini.</td>
+            </tr>
+            <tr>
+                <td><strong>7. Stok Galon Air Posko</strong></td>
+                <td>Sisa ketersediaan galon air minum di posko aktif beserta estimasi nilai rupiahnya.</td>
+            </tr>
+            <tr>
+                <td><strong>8. Status Proteksi &amp; Stock</strong></td>
+                <td>Indikator status kamera AI (<span class="badge b-green">YOLO ONLINE</span> / Standby) dan proteksi lintas posko (<code>Cross-Lock Aktif</code>).</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <!-- BAB 2 -->
+    <h2 class="section-title">BAB 2: Menggunakan Live Camera Tent Monitor (Kamera AI Tenda)</h2>
+    <p>Panel <strong>Live Camera Tent Monitor</strong> memungkinkan Anda memantau tenda pengungsi secara langsung menggunakan AI (<em>YOLO Person Detection + ByteTrack + OpenCV LBPH Face Recognition</em>) langsung dari halaman web tanpa perlu mengetik perintah di Command Prompt.</p>
+
+    <ul class="step-list">
+        <li>
+            <span class="step-num">1</span>
+            <strong>Menyalakan Kamera dari Web:</strong> Klik tombol <span class="badge b-blue">🎥 Nyalakan Kamera Tenda</span> di sebelah kanan panel <em>Live Camera Tent Monitor</em>. Video live beserta kotak deteksi wajah/orang akan langsung muncul di dalam dashboard web.
+        </li>
+        <li>
+            <span class="step-num">2</span>
+            <strong>Fitur Auto-Sync &amp; Pop-up OpenCV:</strong>
+            Centang <code>Auto-Sync</code> jika Anda ingin kamera otomatis menyala setiap kali web dibuka. Centang <code>Pop-up OpenCV</code> jika Anda juga ingin membuka jendela kamera desktop terpisah.
+        </li>
+        <li>
+            <span class="step-num">3</span>
+            <strong>Membaca Informasi di Atas Garis Border Kamera:</strong>
+            Tepat di atas garis border setiap warga yang terdeteksi, sistem menampilkan kotak berlatar putih berisi:<br>
+            <code>&lt;Nama Warga&gt; | Sisa Makanan: &lt;Sisa&gt;/3 Porsi [&lt;KODE-POSKO&gt;]</code>
+        </li>
+    </ul>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 24%;">Warna Border Kamera</th>
+                <th style="width: 22%;">Status Badge</th>
+                <th>Arti &amp; Tindakan Sistem</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><span class="badge b-green">HIJAU</span></td>
+                <td><code>VALID</code></td>
+                <td>Warga terdaftar di posko aktif dan masih memiliki sisa kuota makan hari ini (1/3, 2/3, atau 3/3 porsi tersisa). <strong>Boleh dilayani.</strong></td>
+            </tr>
+            <tr>
+                <td><span class="badge b-red">MERAH</span></td>
+                <td><code>WRONG_POSKO</code> / <code>QUOTA_FULL</code></td>
+                <td>Warga berasal dari posko lain (Cross-Posko ditolak) <strong>ATAU</strong> jatah makan harian 3/3 porsi sudah habis. <strong>Ditolak otomatis.</strong></td>
+            </tr>
+            <tr>
+                <td><span class="badge b-yellow">KUNING</span></td>
+                <td><code>UNREGISTERED</code></td>
+                <td>Wajah orang tersebut belum terdaftar di database wajah LBPH. Arahkan warga untuk mendaftar di Tab 2.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3 class="sub-title">Tombol Kontrol Cepat pada Live Camera Tent Monitor:</h3>
+    <ul>
+        <li style="margin-left: 18px; margin-bottom: 4px;"><strong><code>Layani Warga Terdeteksi (S)</code>:</strong> Langsung memproses klaim makan untuk seluruh warga berstatus <span class="badge b-green">VALID</span> yang sedang terlihat di depan kamera. Sisa makanan di atas border akan langsung berkurang otomatis!</li>
+        <li style="margin-left: 18px; margin-bottom: 4px;"><strong><code>+20 Porsi (A)</code>:</strong> Menambah stok makanan posko aktif sebanyak 20 porsi secara instan.</li>
+        <li style="margin-left: 18px; margin-bottom: 4px;"><strong><code>-1 Galon (G)</code>:</strong> Mencatat pemakaian 1 galon air minum di posko aktif.</li>
+        <li style="margin-left: 18px; margin-bottom: 8px;"><strong><code>Reload LBPH (R)</code>:</strong> Memuat ulang dan melatih ulang model pengenalan wajah LBPH.</li>
+    </ul>
+
+    <!-- BAB 3 -->
+    <h2 class="section-title">BAB 3: Panduan Langkah Demi Langkah 5 Tab Menu Utama</h2>
+
+    <h3 class="sub-title">1. Tab "Registrasi Warga Baru" (Pendaftaran &amp; Rekam Wajah 3 Sudut)</h3>
+    <div class="warn-box">
+        <strong>Penting (Jika Menggunakan 1 Webcam Laptop):</strong> Jika Kamera Tenda sedang menyala, klik tombol <strong><code>⏹ Matikan Kamera Tenda</code></strong> terlebih dahulu sebelum menyalakan kamera di Tab Registrasi atau Tab Scan QR agar webcam tidak berebut akses.
+    </div>
+    <ul class="step-list">
+        <li>
+            <span class="step-num">1</span>
+            Klik tab <strong>Registrasi Warga Baru</strong>, lalu isi <strong>Nama Lengkap</strong>, pilih <strong>Posko Domisili</strong>, isi <strong>Umur</strong>, <strong>Jenis Kelamin (L/P)</strong>, dan <strong>Nama Kepala Keluarga</strong>.
+        </li>
+        <li>
+            <span class="step-num">2</span>
+            <strong>Pengisian NIK (Fleksibel):</strong> Masukkan 16 digit NIK warga. Jika warga kehilangan KTP/tidak memiliki NIK, <strong>biarkan kolom NIK kosong</strong> — sistem otomatis membuat kode unik <code>NO-NIK-XXXXXXXX</code>. <em>(Sistem otomatis menolak jika NIK yang sama sudah terdaftar di posko lain).</em>
+        </li>
+        <li>
+            <span class="step-num">3</span>
+            <strong>Akuisisi Wajah 3 Sudut:</strong> Klik tombol <code>Aktifkan Kamera</code> pada bagian Perekaman Foto Wajah, lalu ambil foto untuk 3 sudut:
+            <br>&bull; <strong>Sudut 1 (Tampak Depan):</strong> Wajah menghadap lurus ke kamera &rarr; klik <code>Ambil Foto</code>.
+            <br>&bull; <strong>Sudut 2 (Tampak Kiri):</strong> Wajah menoleh sedikit ke kiri &rarr; klik <code>Ambil Foto</code>.
+            <br>&bull; <strong>Sudut 3 (Tampak Kanan):</strong> Wajah menoleh sedikit ke kanan &rarr; klik <code>Ambil Foto</code>.
+            <br><em>(Anda juga dapat mengunggah file foto dari komputer melalui tombol <code>Upload File</code> di masing-masing sudut).</em>
+        </li>
+        <li>
+            <span class="step-num">4</span>
+            Klik tombol biru <strong><code>Simpan Data Warga &amp; Latih Wajah LBPH</code></strong>. Data warga tersimpan dan model AI langsung dilatih secara otomatis!
+        </li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <h3 class="sub-title">2. Tab "Cetak Digital ID QR" (Kartu Identitas &amp; Manajemen Warga)</h3>
+    <ul class="step-list">
+        <li>
+            <span class="step-num">1</span>
+            Buka tab <strong>Cetak Digital ID QR</strong> untuk melihat daftar kartu seluruh pengungsi lengkap dengan foto profil, posko domisili, kode QR, dan status kuota makan hari ini (<code>0/3</code> s.d. <code>3/3 Porsi</code>).
+        </li>
+        <li>
+            <span class="step-num">2</span>
+            Gunakan kotak <strong>Cari Nama / NIK / Token QR</strong> atau dropdown <strong>Filter Posko</strong> untuk mencari warga secara instan.
+        </li>
+        <li>
+            <span class="step-num">3</span>
+            Klik tombol <strong><code>Print ID Card</code></strong> pada kartu warga untuk membuka tampilan cetak kartu identitas (siap dicetak ke printer atau disimpan sebagai PDF).
+        </li>
+        <li>
+            <span class="step-num">4</span>
+            Klik tombol merah <strong><code>Hapus Warga</code></strong> jika ingin menghapus data warga beserta seluruh file foto wajahnya dari folder <code>known_faces/</code>.
+        </li>
+    </ul>
+
+    <h3 class="sub-title">3. Tab "Scan QR Makanan" (Distribusi Makanan Harian)</h3>
+    <ul class="step-list">
+        <li>
+            <span class="step-num">1</span>
+            Pastikan <strong>Posko Scanner Aktif</strong> pada bagian atas halaman (navbar) sudah sesuai dengan posko tempat pembagian makanan.
+        </li>
+        <li>
+            <span class="step-num">2</span>
+            Buka tab <strong>Scan QR Makanan</strong>. Anda dapat memproses klaim dengan 2 metode:
+            <br>&bull; <strong>Kamera QR Live:</strong> Klik <code>Mulai Kamera QR</code>, lalu arahkan kartu QR warga ke kamera.
+            <br>&bull; <strong>Input Manual / Alat Scanner USB:</strong> Ketik atau tembakkan kode Token QR (misal <code>QR-POSKO-A-...</code>) atau NIK warga pada kolom input, lalu klik <code>Proses Klaim</code>.
+        </li>
+        <li>
+            <span class="step-num">3</span>
+            <strong>Hasil Validasi 4 Lapis &amp; Indikator Makan:</strong>
+            <br>&bull; Jika <strong>Berhasil (SUCCESS)</strong>: Terdengar bunyi <em>Beep Sukses (nada naik)</em>, stok posko berkurang 1, dan indikator titik makan menyala hijau (<strong>1/3 Pagi</strong>, <strong>2/3 Siang</strong>, atau <strong>3/3 Malam</strong>).
+            <br>&bull; Jika <strong>Beda Posko (HTTP 403)</strong>: Ditolak otomatis (<em>Cross-Posko Claim Denied</em>) disertai bunyi <em>Beep Error</em>.
+            <br>&bull; Jika <strong>Kuota 3x Habis (HTTP 429)</strong>: Ditolak otomatis karena warga sudah mengambil 3 porsi hari ini.
+        </li>
+    </ul>
+
+    <h3 class="sub-title">4. Tab "Manajemen Stok &amp; Posko" (Kelola Gudang Makanan &amp; Galon)</h3>
+    <ul class="step-list">
+        <li>
+            <span class="step-num">1</span>
+            <strong>Menambah Posko Baru:</strong> Pada panel sebelah kiri, isi <em>Kode Posko</em> (contoh: <code>POSKO-C</code>), <em>Nama Posko</em>, <em>Lokasi</em>, <em>Stok Awal Makanan</em>, <em>Batas Alert Makanan</em>, <em>Stok Awal Galon</em>, dan <em>Batas Alert Galon</em>, lalu klik <code>Tambah Posko</code>.
+        </li>
+        <li>
+            <span class="step-num">2</span>
+            <strong>Restock Makanan (+N Porsi):</strong> Pada kartu posko di sebelah kanan, klik tombol <code>+ Restock Makanan</code>, masukkan jumlah porsi tambahan serta batas minimum peringatan, lalu klik <code>Simpan</code>.
+        </li>
+        <li>
+            <span class="step-num">3</span>
+            <strong>Pemakaian &amp; Restock Galon Air:</strong> Klik tombol <code>-1 Pakai Galon</code> setiap kali membuka 1 galon air baru di posko tersebut (otomatis mencatat pengeluaran Rp 22.000). Klik <code>+ Restock Galon</code> untuk menambah stok galon.
+        </li>
+    </ul>
+
+    <h3 class="sub-title">5. Tab "Log Riwayat Distribusi" (Audit Transparansi Real-Time)</h3>
+    <ul class="step-list">
+        <li>
+            <span class="step-num">1</span>
+            Buka tab <strong>Log Riwayat Distribusi</strong> untuk memantau seluruh aktivitas secara kronologis (Waktu, Nama Warga/Logistik, Posko Scanner, Posko Warga, Status Klaim, Makan Keberapa, Biaya Rupiah, dan Catatan Sistem).
+        </li>
+        <li>
+            <span class="step-num">2</span>
+            Gunakan tombol filter cepat di kanan atas tabel untuk menyaring log berdasarkan:
+            <code>Semua</code>, <code>Berhasil</code>, <code>Galon Air</code>, <code>Ditolak (Posko Lain)</code>, <code>Ditolak (Jatah 3x Habis)</code>, atau <code>Ditolak (Stok Habis)</code>.
+        </li>
+    </ul>
+
+    <!-- BAB 4 -->
+    <h2 class="section-title">BAB 4: Solusi Cepat Masalah Umum (Troubleshooting)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 32%;">Kendala yang Dihadapi</th>
+                <th>Solusi Penyelesaian</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Kamera tidak bisa dibuka saat ingin foto wajah / scan QR</strong></td>
+                <td>Jika laptop hanya memiliki 1 webcam, pastikan Anda menekan tombol <code>⏹ Matikan Kamera Tenda</code> terlebih dahulu agar webcam dilepas oleh modul AI Tenda dan dapat dipakai oleh tab browser.</td>
+            </tr>
+            <tr>
+                <td><strong>Wajah warga sudah didaftarkan tetapi di kamera masih tertulis "Belum Terdaftar"</strong></td>
+                <td>Pastikan saat registrasi ketiga sudut wajah (Depan, Kiri, Kanan) sudah terisi dengan pencahayaan cukup, lalu klik tombol <code>Reload LBPH (R)</code> pada panel <em>Live Camera Tent Monitor</em>.</td>
+            </tr>
+            <tr>
+                <td><strong>Muncul pesan "Gagal / Periksa X-Admin-Token" saat Restock atau Aksi Cepat</strong></td>
+                <td>Klik tombol <code>Token Admin</code> di pojok kanan atas navbar, masukkan <code>posko-secret-admin-2026</code>, lalu klik <strong>Simpan Token</strong>.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="footer-note">
+        Dokumen Manual Book Resmi &mdash; <strong>SIKARUNA (Sistem Informasi Kemanusiaan, Alokasi, dan Respons Bencana)</strong>
+    </div>
+
+</body>
+</html>
+

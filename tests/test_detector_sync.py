@@ -224,3 +224,29 @@ def test_detector_sync_and_quick_actions(client: TestClient):
     assert ui_sb["action_result"]["served_count"] == 1
     assert ui_sb["detected_residents"][0]["id"] == r_b["id"]
     assert ui_sb["detected_residents"][0]["today_meals"] == 1
+
+
+def test_tent_camera_endpoints_and_top_border_label(client: TestClient):
+    detector = PoskoTentDetector(active_posko="POSKO-A")
+    detector.resident_cache[1] = {
+        "id": 1,
+        "full_name": "Yosua William",
+        "posko_code": "POSKO-A",
+        "today_meals": 1,
+        "max_meals": 3,
+    }
+    label, color, status_str = detector._format_resident_border_label(1)
+    assert "Yosua William" in label
+    assert "Sisa Makanan: 2/3 Porsi" in label
+    assert "[POSKO-A]" in label
+    assert status_str == "VALID"
+    assert color == (0, 200, 0)
+
+    stop_res = client.post("/api/detector/camera/stop")
+    assert stop_res.status_code == 200
+    assert stop_res.json()["camera_running"] is False
+
+    stream_res = client.get("/api/detector/stream")
+    assert stream_res.status_code == 200
+    assert "multipart/x-mixed-replace" in stream_res.headers.get("content-type", "")
+

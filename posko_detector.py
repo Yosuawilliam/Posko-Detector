@@ -95,6 +95,19 @@ class PoskoTentDetector:
             self._yolo_model = YOLO(weights)
         return self._yolo_model
 
+    def fetch_residents_from_api(self) -> None:
+        url = f"{self.api_base_url}/api/residents"
+        req = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                residents = json.loads(resp.read().decode("utf-8"))
+                if isinstance(residents, list):
+                    for r_obj in residents:
+                        if isinstance(r_obj, dict) and "id" in r_obj:
+                            self.resident_cache[int(r_obj["id"])] = r_obj
+        except Exception as exc:
+            logger.debug("Could not pre-fetch residents from %s: %s", url, exc)
+
     def sync_with_server(
         self,
         person_count: int,
@@ -123,6 +136,9 @@ class PoskoTentDetector:
                 body = json.loads(resp.read().decode("utf-8"))
                 self.active_posko = str(body.get("active_posko", self.active_posko))
                 self.posko_summary = body.get("posko_summary") or {}
+                for r_obj in body.get("all_residents", []):
+                    if isinstance(r_obj, dict) and "id" in r_obj:
+                        self.resident_cache[int(r_obj["id"])] = r_obj
                 for r_obj in body.get("detected_residents", []):
                     if isinstance(r_obj, dict) and "id" in r_obj:
                         self.resident_cache[int(r_obj["id"])] = r_obj
@@ -151,11 +167,94 @@ class PoskoTentDetector:
             action=action,
         )
 
+    def _format_resident_border_label(
+        self,
+        rid: int | None,
+    ) -> tuple[str, tuple[int, int, int], str]:
+        if rid is not None and rid not in self.resident_cache:
+            self.fetch_residents_from_api()
+
+        resident_info = self.resident_cache.get(rid) if rid is not None else None
+        box_status, color = classify_resident_box(resident_info, self.active_posko)
+
+        if resident_info is not None:
+            name = resident_info.get("full_name", f"Warga #{rid}")
+            posko = resident_info.get("posko_code", self.active_posko)
+            used_meals = int(resident_info.get("today_meals", 0))
+            max_m = int(resident_info.get("max_meals", MAX_DAILY_MEALS))
+            remaining_meals = max(0, max_m - used_meals)
+            label = f"{name} | Sisa Makanan: {remaining_meals}/{max_m} Porsi [{posko}]"
+        else:
+            label = "Belum Terdaftar | Sisa Makanan: -"
+
+        return label, color, box_status
+
+    @staticmethod
+    def _draw_border_with_top_label(
+        canvas: np.ndarray,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        label: str,
+        color: tuple[int, int, int],
+        bottom_tag: str | None = None,
+    ) -> None:
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.58
+        thickness = 2
+        (text_w, text_h), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        pad_x, pad_y = 8, 6
+        box_h = text_h + baseline + pad_y * 2
+        box_w = text_w + pad_x * 2
+
+        # Place label badge right above the top border (x1, y1); clamp inside frame if y1 is near top edge
+        if y1 - box_h >= 4:
+            bg_y1 = y1 - box_h
+            bg_y2 = y1
+        else:
+            bg_y1 = max(0, y1)
+            bg_y2 = min(canvas.shape[0], y1 + box_h)
+
+        bg_x1 = max(0, x1)
+        bg_x2 = min(canvas.shape[1], bg_x1 + box_w)
+
+        # White background badge with colored border right above the top border
+        cv2.rectangle(canvas, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+        cv2.rectangle(canvas, (bg_x1, bg_y1), (bg_x2, bg_y2), color, 2)
+        text_color = (15, 23, 42)
+        text_y = bg_y2 - pad_y - baseline // 2
+        cv2.putText(
+            canvas,
+            label,
+            (bg_x1 + pad_x, text_y),
+            font,
+            font_scale,
+            text_color,
+            thickness,
+            cv2.LINE_AA,
+        )
+
+        if bottom_tag:
+            cv2.putText(
+                canvas,
+                bottom_tag,
+                (x1 + 6, max(20, y2 - 8)),
+                font,
+                0.45,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
+
     def process_frame(
         self,
         frame: np.ndarray,
     ) -> tuple[np.ndarray, int, list[int]]:
         annotated = frame.copy()
+        h_frame, w_frame = frame.shape[:2]
         person_boxes: list[tuple[int, int, int, int, int | None]] = []
 
         if self._yolo_model is not None:
@@ -181,47 +280,56 @@ class PoskoTentDetector:
 
         face_detections = self.face_service.recognize_faces(frame)
         detected_resident_ids: list[int] = []
+        matched_face_indices: set[int] = set()
 
-        for f_det in face_detections:
+        for x1, y1, x2, y2, tid in person_boxes:
+            matched_rid: int | None = None
+            best_conf: float = 999.0
+
+            for idx, f_det in enumerate(face_detections):
+                fx, fy, fw, fh = f_det["bbox"]
+                # Skip synthetic full-frame fallback box when real person_boxes exist
+                if fx == 0 and fy == 0 and fw == w_frame and fh == h_frame:
+                    matched_face_indices.add(idx)
+                    continue
+                cx = fx + fw / 2.0
+                cy = fy + fh / 2.0
+                if x1 <= cx <= x2 and y1 <= cy <= y2:
+                    matched_face_indices.add(idx)
+                    if f_det["resident_id"] is not None and f_det["confidence"] < best_conf:
+                        matched_rid = int(f_det["resident_id"])
+                        best_conf = float(f_det["confidence"])
+
+            if matched_rid is None:
+                crop_y1, crop_y2 = max(0, y1), min(h_frame, y2)
+                crop_x1, crop_x2 = max(0, x1), min(w_frame, x2)
+                if crop_y2 > crop_y1 and crop_x2 > crop_x1:
+                    crop_rid, _crop_conf = self.face_service.predict_person_crop(
+                        frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                    )
+                    if crop_rid is not None:
+                        matched_rid = int(crop_rid)
+
+            if matched_rid is not None and matched_rid not in detected_resident_ids:
+                detected_resident_ids.append(matched_rid)
+
+            label, color, _status = self._format_resident_border_label(matched_rid)
+            tag = f"Person #{tid}" if tid is not None else "Person"
+            self._draw_border_with_top_label(
+                annotated, x1, y1, x2, y2, label, color, bottom_tag=tag
+            )
+
+        for idx, f_det in enumerate(face_detections):
+            if idx in matched_face_indices:
+                continue
             fx, fy, fw, fh = f_det["bbox"]
             rid = f_det["resident_id"]
             if rid is not None and rid not in detected_resident_ids:
                 detected_resident_ids.append(rid)
 
-            resident_info = self.resident_cache.get(rid) if rid is not None else None
-            box_status, color = classify_resident_box(resident_info, self.active_posko)
-
-            if resident_info is not None:
-                name = resident_info.get("full_name", f"ID:{rid}")
-                posko = resident_info.get("posko_code", "?")
-                meals = resident_info.get("today_meals", 0)
-                max_m = resident_info.get("max_meals", MAX_DAILY_MEALS)
-                label = f"{name} [{posko}] ({meals}/{max_m}) - {box_status}"
-            else:
-                label = f"UNREGISTERED ({box_status})"
-
-            cv2.rectangle(annotated, (fx, fy), (fx + fw, fy + fh), color, 2)
-            cv2.putText(
-                annotated,
-                label,
-                (fx, max(20, fy - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                color,
-                2,
-            )
-
-        for x1, y1, x2, y2, tid in person_boxes:
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 180, 0), 1)
-            tag = f"Person #{tid}" if tid is not None else "Person"
-            cv2.putText(
-                annotated,
-                tag,
-                (x1, min(annotated.shape[0] - 10, y2 + 16)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (255, 180, 0),
-                1,
+            label, color, _status = self._format_resident_border_label(rid)
+            self._draw_border_with_top_label(
+                annotated, fx, fy, fx + fw, fy + fh, label, color
             )
 
         person_count = max(len(person_boxes), len(face_detections))
@@ -242,27 +350,34 @@ class PoskoTentDetector:
         )
         controls = "[S] Serve Valid  [A] +20 Porsi  [G] -1 Galon  [P] Ganti Posko  [R] Reload Wajah  [Q] Keluar"
 
-        cv2.rectangle(frame, (0, 0), (frame.shape[1], 58), (20, 20, 20), -1)
+        h_frame, w_frame = frame.shape[:2]
+        hud_h = 54
+        y_top = max(0, h_frame - hud_h)
+        cv2.rectangle(frame, (0, y_top), (w_frame, h_frame), (255, 255, 255), -1)
+        cv2.line(frame, (0, y_top), (w_frame, y_top), (203, 213, 225), 2)
         cv2.putText(
             frame,
             header,
-            (12, 24),
+            (12, y_top + 22),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
+            0.55,
+            (15, 23, 42),
             2,
         )
         cv2.putText(
             frame,
             controls,
-            (12, 48),
+            (12, y_top + 44),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (180, 220, 255),
+            0.44,
+            (71, 85, 105),
             1,
         )
 
     def run(self) -> None:
+        self.face_service.train_model()
+        self.fetch_residents_from_api()
+        self.sync_with_server(0, [], action=None)
         self.load_yolo_model()
         cap = cv2.VideoCapture(self.camera_index)
         if not cap.isOpened():

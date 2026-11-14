@@ -269,16 +269,52 @@ function renderTentMonitor(det) {
     const syncTimeEl = document.getElementById("tentLastSyncText");
     const countEl = document.getElementById("tentPersonCount");
     const listEl = document.getElementById("tentRecognizedList");
+    const btnCamera = document.getElementById("btnToggleTentCamera");
+    const videoBox = document.getElementById("tentVideoPreviewBox");
+    const monitorBody = document.getElementById("tentMonitorBody");
+    const streamImg = document.getElementById("tentLiveStreamImg");
 
-    const isOnline = Boolean(det.online || det.yolo_camera_online);
+    const isCameraRunning = Boolean(det.camera_running);
+    const isOnline = Boolean(det.online || det.yolo_camera_online || isCameraRunning);
+    appState.tentCameraRunning = isCameraRunning;
+
     if (badgeEl) {
         badgeEl.textContent = isOnline ? "ONLINE" : "Standby";
         badgeEl.className = isOnline ? "badge badge-safe" : "badge badge-neutral";
     }
+    if (btnCamera) {
+        if (isCameraRunning) {
+            btnCamera.textContent = "⏹ Matikan Kamera Tenda";
+            btnCamera.className = "btn btn-sm btn-danger";
+        } else {
+            btnCamera.textContent = "🎥 Nyalakan Kamera Tenda";
+            btnCamera.className = "btn btn-sm btn-primary";
+        }
+    }
+    if (videoBox && monitorBody && streamImg) {
+        if (isCameraRunning) {
+            videoBox.classList.remove("hidden");
+            monitorBody.classList.add("has-video");
+            const currentSrc = streamImg.getAttribute("src") || "";
+            if (!currentSrc.startsWith("/api/detector/stream")) {
+                streamImg.setAttribute("src", `/api/detector/stream?t=${Date.now()}`);
+            }
+        } else {
+            videoBox.classList.add("hidden");
+            monitorBody.classList.remove("has-video");
+            if (streamImg.getAttribute("src")) {
+                streamImg.removeAttribute("src");
+            }
+        }
+    }
     if (syncTimeEl) {
-        syncTimeEl.textContent = det.last_sync
-            ? `Sinkronisasi terakhir: ${det.last_sync} (${det.active_posko || appState.activePosko})`
-            : "Belum ada sinkronisasi kamera";
+        if (!isOnline && det.camera_error) {
+            syncTimeEl.textContent = `Info Kamera: ${det.camera_error}`;
+        } else {
+            syncTimeEl.textContent = det.last_sync
+                ? `Sinkronisasi terakhir: ${det.last_sync} (${det.active_posko || appState.activePosko})`
+                : "Belum ada sinkronisasi kamera (Klik 'Nyalakan Kamera Tenda')";
+        }
     }
     if (countEl) {
         countEl.textContent = String(det.person_count ?? 0);
@@ -315,6 +351,53 @@ function renderTentMonitor(det) {
         }
     }
 }
+
+async function toggleTentCamera(forceAction) {
+    const shouldStart =
+        typeof forceAction === "boolean" ? forceAction : !Boolean(appState.tentCameraRunning);
+    const btnCamera = document.getElementById("btnToggleTentCamera");
+    const showWindow = Boolean(document.getElementById("chkShowOpenCvWindow")?.checked);
+
+    if (btnCamera) {
+        btnCamera.disabled = true;
+        btnCamera.textContent = shouldStart ? "Menghubungkan Kamera..." : "Mematikan Kamera...";
+    }
+
+    try {
+        if (shouldStart) {
+            const res = await fetchJSON("/api/detector/camera/start", {
+                method: "POST",
+                body: {
+                    camera_index: 0,
+                    active_posko: appState.activePosko,
+                    show_window: showWindow,
+                },
+            });
+            if (res.data) {
+                renderTentMonitor(res.data);
+            }
+            if (!res.ok) {
+                alert(
+                    res.data?.camera_error ||
+                        "Gagal menyalakan kamera tenda. Pastikan webcam tidak sedang dipakai tab/aplikasi lain."
+                );
+            }
+        } else {
+            const res = await fetchJSON("/api/detector/camera/stop", {
+                method: "POST",
+            });
+            if (res.data) {
+                renderTentMonitor(res.data);
+            }
+        }
+        await loadPoskosAndSummary();
+    } finally {
+        if (btnCamera) {
+            btnCamera.disabled = false;
+        }
+    }
+}
+
 
 async function triggerDetectorAction(actionName) {
     const res = await fetchJSON("/api/detector/sync", {
@@ -647,7 +730,7 @@ function renderResidentsGrid() {
                 : "";
             const photoUrl = normalizedPhotoPath
                 ? escapeHTML(normalizedPhotoPath)
-                : `https://ui-avatars.com/api/?name=${encodeURIComponent(r.full_name || "W")}&background=1e293b&color=f8fafc`;
+                : `https://ui-avatars.com/api/?name=${encodeURIComponent(r.full_name || "W")}&background=f1f5f9&color=0f172a`;
             const qrUrl = `/api/residents/qr/${encodeURIComponent(r.qr_token)}`;
             const meals = Number(r.today_meals || 0);
             const maxMeals = Number(r.max_meals || 3);
@@ -725,7 +808,7 @@ function printResidentIdCard(residentId) {
         : "";
     const photoUrl = normalizedPhotoPath
         ? escapeHTML(normalizedPhotoPath)
-        : `https://ui-avatars.com/api/?name=${encodeURIComponent(r.full_name || "W")}&background=1e293b&color=f8fafc`;
+        : `https://ui-avatars.com/api/?name=${encodeURIComponent(r.full_name || "W")}&background=f1f5f9&color=0f172a`;
     const qrUrl = `/api/residents/qr/${encodeURIComponent(r.qr_token)}`;
     container.innerHTML = `
         <div class="print-id-sheet">
@@ -1010,11 +1093,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const activeSelect = document.getElementById("activePoskoSelect");
     if (activeSelect) {
-        activeSelect.addEventListener("change", () => {
+        activeSelect.addEventListener("change", async () => {
             appState.activePosko = activeSelect.value;
+            if (appState.tentCameraRunning) {
+                await fetchJSON("/api/detector/camera/start", {
+                    method: "POST",
+                    body: {
+                        camera_index: 0,
+                        active_posko: appState.activePosko,
+                        show_window: Boolean(document.getElementById("chkShowOpenCvWindow")?.checked),
+                    },
+                });
+            }
             loadPoskosAndSummary();
         });
     }
+
 
     const manualScanForm = document.getElementById("manualScanForm");
     if (manualScanForm) {
@@ -1122,12 +1216,38 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    document.getElementById("btnToggleTentCamera")?.addEventListener("click", () => toggleTentCamera());
+
+    const chkAutoStart = document.getElementById("chkAutoStartTentCamera");
+    if (chkAutoStart) {
+        chkAutoStart.checked = localStorage.getItem("posko_auto_start_tent_camera") === "1";
+        chkAutoStart.addEventListener("change", () => {
+            localStorage.setItem("posko_auto_start_tent_camera", chkAutoStart.checked ? "1" : "0");
+            if (chkAutoStart.checked && !appState.tentCameraRunning) {
+                toggleTentCamera(true);
+            }
+        });
+    }
+
+    const chkShowWindow = document.getElementById("chkShowOpenCvWindow");
+    if (chkShowWindow) {
+        chkShowWindow.addEventListener("change", () => {
+            if (appState.tentCameraRunning) {
+                toggleTentCamera(true);
+            }
+        });
+    }
+
     document.getElementById("btnQuickServeAll")?.addEventListener("click", () => triggerDetectorAction("serve_all"));
     document.getElementById("btnQuickRestock20")?.addEventListener("click", () => triggerDetectorAction("restock_20"));
     document.getElementById("btnQuickUseGallon")?.addEventListener("click", () => triggerDetectorAction("use_gallon"));
     document.getElementById("btnQuickReloadFaces")?.addEventListener("click", () => triggerDetectorAction("reload_faces"));
 
-    loadPoskosAndSummary();
+    loadPoskosAndSummary().then(() => {
+        if (localStorage.getItem("posko_auto_start_tent_camera") === "1" && !appState.tentCameraRunning) {
+            toggleTentCamera(true);
+        }
+    });
     loadResidents();
     loadLogs();
     setInterval(() => {

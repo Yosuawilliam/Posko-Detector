@@ -1,20 +1,26 @@
 import io
+import logging
+import os
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 import qrcode
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from auth import verify_admin_auth
-from database import get_db, init_db
+from database import SessionLocal, get_db, init_db
 from face_recog import FaceRecognitionService
 from models import (
     GALLON_PRICE,
@@ -24,18 +30,22 @@ from models import (
     Posko,
     Resident,
 )
-from posko_detector import classify_resident_box
+from posko_detector import HANDLE_HOTKEY_MAP, PoskoTentDetector, classify_resident_box
+
+logger = logging.getLogger(__name__)
 
 face_service = FaceRecognitionService()
 
 DEFAULT_DETECTOR_STATE: dict[str, Any] = {
     "online": False,
     "yolo_camera_online": False,
+    "camera_running": False,
     "active_posko": "POSKO-A",
     "person_count": 0,
     "detected_residents": [],
     "recognized_residents": [],
     "last_sync": None,
+    "camera_error": None,
 }
 
 detector_state: dict[str, Any] = dict(DEFAULT_DETECTOR_STATE)
@@ -48,10 +58,21 @@ def reset_detector_state() -> None:
     detector_state["recognized_residents"] = []
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    if os.getenv("AUTO_START_TENT_CAMERA", "0").strip().lower() in ("1", "true", "yes"):
+        tent_camera_manager.start(
+            camera_index=int(os.getenv("TENT_CAMERA_INDEX", "0")),
+            active_posko=os.getenv("TENT_ACTIVE_POSKO", "POSKO-A"),
+            show_window=os.getenv("TENT_SHOW_WINDOW", "0").strip().lower() in ("1", "true", "yes"),
+        )
+    try:
+        yield
+    finally:
+        tent_camera_manager.stop()
+
 
 
 app = FastAPI(
@@ -937,17 +958,313 @@ class DetectorSyncRequest(BaseModel):
     action: str | None = Field(default=None)
 
 
+class CameraStartRequest(BaseModel):
+    camera_index: int | str = Field(default=0)
+    active_posko: str = Field(default="POSKO-A", min_length=1, max_length=32)
+    show_window: bool = Field(default=False)
+
+
+class TentCameraManager:
+    """Built-in background camera worker so Live Camera Tent Monitor works without CLI prompt."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.running: bool = False
+        self.camera_index: int | str = 0
+        self.active_posko: str = "POSKO-A"
+        self.show_window: bool = False
+        self.latest_jpeg: bytes | None = None
+        self.last_error: str | None = None
+        self.detector: PoskoTentDetector | None = None
+
+    @staticmethod
+    def _build_placeholder_jpeg(message: str) -> bytes:
+        canvas = np.zeros((360, 640, 3), dtype=np.uint8)
+        canvas[:] = (255, 255, 255)
+        cv2.putText(
+            canvas,
+            message,
+            (32, 185),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.62,
+            (15, 23, 42),
+            2,
+            cv2.LINE_AA,
+        )
+        ok, buf = cv2.imencode(".jpg", canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        return buf.tobytes() if ok else b""
+
+    def _open_capture(self) -> Any:
+        if isinstance(self.camera_index, int) and os.name == "nt":
+            cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+            if cap is not None and cap.isOpened():
+                return cap
+            if cap is not None:
+                cap.release()
+        return cv2.VideoCapture(self.camera_index)
+
+    def _sync_in_process(
+        self,
+        person_count: int,
+        detected_resident_ids: list[int],
+        action: str | None = None,
+    ) -> dict[str, Any] | None:
+        try:
+            with SessionLocal() as db:
+                body = sync_detector(
+                    payload=DetectorSyncRequest(
+                        active_posko=self.active_posko,
+                        person_count=person_count,
+                        detected_resident_ids=detected_resident_ids,
+                        action=action,
+                    ),
+                    db=db,
+                    _admin="internal",
+                )
+                self.active_posko = str(body.get("active_posko", self.active_posko))
+                if self.detector is not None:
+                    self.detector.active_posko = self.active_posko
+                    self.detector.posko_summary = body.get("posko_summary") or {}
+                    for r_obj in body.get("all_residents", []):
+                        if isinstance(r_obj, dict) and "id" in r_obj:
+                            self.detector.resident_cache[int(r_obj["id"])] = r_obj
+                return body
+        except Exception as exc:
+            logger.warning("In-process tent camera sync failed: %s", exc)
+            return None
+
+    def _worker_loop(self) -> None:
+        cap = None
+        try:
+            self.latest_jpeg = self._build_placeholder_jpeg(
+                "Menyiapkan Kamera Tenda AI (YOLO + LBPH)..."
+            )
+            self.detector = PoskoTentDetector(
+                active_posko=self.active_posko,
+                camera_index=self.camera_index,
+                face_service=face_service,
+            )
+            face_service.train_model()
+            self._sync_in_process(0, [])
+            try:
+                self.detector.load_yolo_model()
+            except Exception as exc:
+                logger.warning("YOLO model load warning in background worker: %s", exc)
+
+            cap = self._open_capture()
+            if cap is None or not cap.isOpened():
+                self.last_error = (
+                    f"Kamera (index {self.camera_index}) tidak ditemukan atau sedang dipakai aplikasi lain."
+                )
+                detector_state["camera_error"] = self.last_error
+                detector_state["camera_running"] = False
+                detector_state["online"] = False
+                detector_state["yolo_camera_online"] = False
+                self.running = False
+                self._ready_event.set()
+                return
+
+            detector_state["camera_running"] = True
+            detector_state["camera_error"] = None
+            self._ready_event.set()
+
+            last_sync_ts = 0.0
+            last_person_count = -1
+            last_resident_ids: list[int] = []
+            consecutive_failures = 0
+
+            while not self._stop_event.is_set():
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    consecutive_failures += 1
+                    if consecutive_failures > 40:
+                        self.last_error = "Koneksi frame kamera terputus."
+                        detector_state["camera_error"] = self.last_error
+                        break
+                    time.sleep(0.05)
+                    continue
+
+                consecutive_failures = 0
+                if self.detector is not None:
+                    self.detector.active_posko = self.active_posko
+                    annotated, person_count, resident_ids = self.detector.process_frame(frame)
+                else:
+                    annotated, person_count, resident_ids = frame, 0, []
+
+                ok_jpg, buf = cv2.imencode(
+                    ".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+                )
+                if ok_jpg:
+                    self.latest_jpeg = buf.tobytes()
+
+                now = time.time()
+                if (
+                    now - last_sync_ts >= 0.8
+                    or person_count != last_person_count
+                    or resident_ids != last_resident_ids
+                ):
+                    self._sync_in_process(person_count, resident_ids)
+                    last_sync_ts = now
+                    last_person_count = person_count
+                    last_resident_ids = list(resident_ids)
+
+                if self.show_window:
+                    cv2.imshow("Posko AI Tent Detector", annotated)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        break
+                    if key in HANDLE_HOTKEY_MAP:
+                        action_name = HANDLE_HOTKEY_MAP[key]
+                        self._sync_in_process(person_count, resident_ids, action=action_name)
+
+                time.sleep(0.02)
+        except Exception as exc:
+            logger.exception("Error in TentCameraManager worker loop: %s", exc)
+            self.last_error = str(exc)
+            detector_state["camera_error"] = self.last_error
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            if self.show_window:
+                try:
+                    cv2.destroyAllWindows()
+                except Exception:
+                    pass
+            self.running = False
+            detector_state["camera_running"] = False
+            detector_state["online"] = False
+            detector_state["yolo_camera_online"] = False
+            self._ready_event.set()
+
+    def start(
+        self,
+        camera_index: int | str = 0,
+        active_posko: str = "POSKO-A",
+        show_window: bool = False,
+    ) -> dict[str, Any]:
+        with self._lock:
+            clean_posko = (active_posko or "POSKO-A").strip().upper()
+            if self.running and self._thread is not None and self._thread.is_alive():
+                self.active_posko = clean_posko
+                self.show_window = bool(show_window)
+                if self.detector is not None:
+                    self.detector.active_posko = clean_posko
+                detector_state["active_posko"] = clean_posko
+                detector_state["camera_running"] = True
+                return get_detector_status()
+
+            self._stop_event.clear()
+            self._ready_event.clear()
+            self.camera_index = camera_index
+            self.active_posko = clean_posko
+            self.show_window = bool(show_window)
+            self.last_error = None
+            detector_state["camera_error"] = None
+            self.running = True
+            self._thread = threading.Thread(
+                target=self._worker_loop,
+                name="posko-tent-camera-worker",
+                daemon=True,
+            )
+            self._thread.start()
+
+        self._ready_event.wait(timeout=4.0)
+        return get_detector_status()
+
+    def stop(self) -> dict[str, Any]:
+        with self._lock:
+            self._stop_event.set()
+            thread = self._thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.5)
+        with self._lock:
+            self.running = False
+            self._thread = None
+            self.latest_jpeg = None
+            detector_state["camera_running"] = False
+            detector_state["online"] = False
+            detector_state["yolo_camera_online"] = False
+            detector_state["person_count"] = 0
+            detector_state["detected_residents"] = []
+            detector_state["recognized_residents"] = []
+        return get_detector_status()
+
+
+tent_camera_manager = TentCameraManager()
+
+
 @app.get("/api/detector/status")
 def get_detector_status() -> dict[str, Any]:
     return {
         "online": bool(detector_state.get("online", False)),
         "yolo_camera_online": bool(detector_state.get("yolo_camera_online", False)),
+        "camera_running": bool(tent_camera_manager.running or detector_state.get("camera_running", False)),
+        "camera_error": detector_state.get("camera_error"),
         "active_posko": detector_state.get("active_posko", "POSKO-A"),
         "person_count": int(detector_state.get("person_count", 0)),
         "detected_residents": list(detector_state.get("detected_residents", [])),
         "recognized_residents": list(detector_state.get("recognized_residents", [])),
         "last_sync": detector_state.get("last_sync"),
     }
+
+
+@app.post("/api/detector/camera/start")
+def start_tent_camera_endpoint(
+    payload: CameraStartRequest | None = Body(default=None),
+) -> JSONResponse:
+    req = payload or CameraStartRequest()
+    status_data = tent_camera_manager.start(
+        camera_index=req.camera_index,
+        active_posko=req.active_posko,
+        show_window=req.show_window,
+    )
+    if not status_data.get("camera_running") and status_data.get("camera_error"):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=status_data,
+        )
+    return JSONResponse(status_code=status.HTTP_200_OK, content=status_data)
+
+
+@app.post("/api/detector/camera/stop")
+def stop_tent_camera_endpoint() -> dict[str, Any]:
+    return tent_camera_manager.stop()
+
+
+@app.get("/api/detector/stream")
+def stream_tent_camera():
+    def _frame_generator():
+        while tent_camera_manager.running:
+            frame_bytes = tent_camera_manager.latest_jpeg
+            if not frame_bytes:
+                frame_bytes = TentCameraManager._build_placeholder_jpeg(
+                    "Menunggu video frame dari Kamera Tenda..."
+                )
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+            )
+            time.sleep(0.05)
+
+        offline_bytes = TentCameraManager._build_placeholder_jpeg(
+            "Kamera Tenda Standby (Klik 'Nyalakan Kamera Tenda')"
+        )
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + offline_bytes + b"\r\n"
+        )
+
+    return StreamingResponse(
+        _frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
 
 
 @app.post("/api/detector/sync")
@@ -1109,6 +1426,21 @@ def sync_detector(
             enriched["box_status"] = box_status
             detected_residents.append(enriched)
 
+    all_residents_rows = list(db.scalars(select(Resident).order_by(Resident.id.asc())).all())
+    all_meals_rows = db.execute(
+        select(DistributionLog.resident_id, func.count(DistributionLog.id))
+        .where(
+            DistributionLog.claim_date == today,
+            DistributionLog.status == "SUCCESS",
+        )
+        .group_by(DistributionLog.resident_id)
+    ).all()
+    all_meals_map = {res_id: cnt for res_id, cnt in all_meals_rows if res_id is not None}
+    all_residents_serialized = [
+        serialize_resident(r, today_meals=all_meals_map.get(r.id, 0))
+        for r in all_residents_rows
+    ]
+
     active_posko_obj = db.scalar(select(Posko).where(Posko.code == active_posko))
     posko_summary = (
         serialize_posko(active_posko_obj, db=db) if active_posko_obj is not None else {}
@@ -1123,15 +1455,35 @@ def sync_detector(
     detector_state["recognized_residents"] = detected_residents
     detector_state["last_sync"] = now_iso
 
+    if tent_camera_manager.running and tent_camera_manager.detector is not None:
+        tent_camera_manager.active_posko = active_posko
+        tent_camera_manager.detector.active_posko = active_posko
+        tent_camera_manager.detector.posko_summary = posko_summary
+        for r_obj in all_residents_serialized:
+            if isinstance(r_obj, dict) and "id" in r_obj:
+                tent_camera_manager.detector.resident_cache[int(r_obj["id"])] = r_obj
+
+
     return {
         "detector_online": True,
         "online": True,
         "active_posko": active_posko,
         "person_count": effective_person_count,
         "detected_residents": detected_residents,
+        "all_residents": all_residents_serialized,
         "action_result": action_result,
         "posko_summary": posko_summary,
         "last_sync": now_iso,
     }
+
+
+if __name__ == "__main__":
+    import os
+    import uvicorn
+
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app:app", host=host, port=port, reload=False)
+
 
 

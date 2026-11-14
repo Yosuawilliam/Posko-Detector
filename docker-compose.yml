@@ -1,0 +1,41 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: sikaruna-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword123
+      MYSQL_DATABASE: posko_detector_db
+      MYSQL_USER: posko_user
+      MYSQL_PASSWORD: poskopassword123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword123"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    container_name: sikaruna-web
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: posko_user
+      MYSQL_PASSWORD: poskopassword123
+      MYSQL_DB: posko_detector_db
+    ports:
+      - "8000:8000"
+    volumes:
+      - face_data:/app/known_faces
+
+volumes:
+  mysql_data:
+  face_data:

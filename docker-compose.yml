@@ -18,7 +18,6 @@ services:
 
   web:
     build: .
-    image: sikaruna-web:latest
     container_name: sikaruna-web
     restart: always
     depends_on:
@@ -34,6 +33,13 @@ services:
       - "8000:8000"
     volumes:
       - face_data:/app/known_faces
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sikaruna.rule=Host(`sikaruna.tech`)"
+      - "traefik.http.routers.sikaruna.entrypoints=websecure"
+      - "traefik.http.routers.sikaruna.tls=true"
+      - "traefik.http.routers.sikaruna.tls.certresolver=letsencrypt"
+      - "traefik.http.services.sikaruna.loadbalancer.server.port=8000"
 
 volumes:
   mysql_data:

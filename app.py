@@ -1,3 +1,4 @@
+import base64
 import io
 import logging
 import os
@@ -964,11 +965,17 @@ class CameraStartRequest(BaseModel):
     show_window: bool = Field(default=False)
 
 
+class BrowserFrameRequest(BaseModel):
+    image_base64: str = Field(..., min_length=10)
+    active_posko: str = Field(default="POSKO-A", min_length=1, max_length=32)
+
+
 class TentCameraManager:
     """Built-in background camera worker so Live Camera Tent Monitor works without CLI prompt."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._frame_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._ready_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -979,6 +986,9 @@ class TentCameraManager:
         self.latest_jpeg: bytes | None = None
         self.last_error: str | None = None
         self.detector: PoskoTentDetector | None = None
+        self._last_ext_sync_ts: float = 0.0
+        self._last_ext_person_count: int = -1
+        self._last_ext_resident_ids: list[int] = []
 
     @staticmethod
     def _build_placeholder_jpeg(message: str) -> bytes:
@@ -1177,6 +1187,65 @@ class TentCameraManager:
         self._ready_event.wait(timeout=4.0)
         return get_detector_status()
 
+    def process_browser_frame(
+        self,
+        image_base64: str,
+        active_posko: str = "POSKO-A",
+    ) -> dict[str, Any]:
+        raw_bytes = FaceRecognitionService._decode_image_bytes(image_base64)
+        if not raw_bytes:
+            raise ValueError("Data gambar frame tidak valid")
+        arr = np.frombuffer(raw_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("Gagal decode frame kamera")
+
+        clean_posko = (active_posko or "POSKO-A").strip().upper()
+        with self._frame_lock:
+            self.active_posko = clean_posko
+            if self.detector is None:
+                self.detector = PoskoTentDetector(
+                    active_posko=self.active_posko,
+                    camera_index=0,
+                    face_service=face_service,
+                )
+                face_service.train_model()
+                self._sync_in_process(0, [])
+                try:
+                    self.detector.load_yolo_model()
+                except Exception as exc:
+                    logger.warning("YOLO model load warning in browser frame processor: %s", exc)
+
+            self.detector.active_posko = self.active_posko
+            annotated, person_count, resident_ids = self.detector.process_frame(frame)
+            ok_jpg, buf = cv2.imencode(
+                ".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 78]
+            )
+            jpeg_bytes = buf.tobytes() if ok_jpg else raw_bytes
+            self.latest_jpeg = jpeg_bytes
+
+            now = time.time()
+            if (
+                now - self._last_ext_sync_ts >= 0.8
+                or person_count != self._last_ext_person_count
+                or resident_ids != self._last_ext_resident_ids
+            ):
+                self._sync_in_process(person_count, resident_ids)
+                self._last_ext_sync_ts = now
+                self._last_ext_person_count = person_count
+                self._last_ext_resident_ids = list(resident_ids)
+
+            detector_state["camera_running"] = True
+            detector_state["camera_error"] = None
+            detector_state["online"] = True
+            detector_state["yolo_camera_online"] = True
+
+        b64_annotated = base64.b64encode(jpeg_bytes).decode("ascii")
+        return {
+            "annotated_image": f"data:image/jpeg;base64,{b64_annotated}",
+            "status": get_detector_status(),
+        }
+
     def stop(self) -> dict[str, Any]:
         with self._lock:
             self._stop_event.set()
@@ -1212,6 +1281,20 @@ def get_detector_status() -> dict[str, Any]:
         "recognized_residents": list(detector_state.get("recognized_residents", [])),
         "last_sync": detector_state.get("last_sync"),
     }
+
+
+@app.post("/api/detector/frame")
+def process_tent_browser_frame(payload: BrowserFrameRequest) -> dict[str, Any]:
+    try:
+        return tent_camera_manager.process_browser_frame(
+            image_base64=payload.image_base64,
+            active_posko=payload.active_posko,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @app.post("/api/detector/camera/start")

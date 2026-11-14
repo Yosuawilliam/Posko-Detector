@@ -79,6 +79,10 @@ const appState = {
     },
     webcamStream: null,
     qrScanner: null,
+    browserTentStream: null,
+    browserTentVideoEl: null,
+    browserTentCanvasEl: null,
+    browserTentLoopActive: false,
 };
 
 function statusBadgeClass(statusText) {
@@ -274,7 +278,7 @@ function renderTentMonitor(det) {
     const monitorBody = document.getElementById("tentMonitorBody");
     const streamImg = document.getElementById("tentLiveStreamImg");
 
-    const isCameraRunning = Boolean(det.camera_running);
+    const isCameraRunning = Boolean(det.camera_running || appState.browserTentLoopActive);
     const isOnline = Boolean(det.online || det.yolo_camera_online || isCameraRunning);
     appState.tentCameraRunning = isCameraRunning;
 
@@ -295,9 +299,11 @@ function renderTentMonitor(det) {
         if (isCameraRunning) {
             videoBox.classList.remove("hidden");
             monitorBody.classList.add("has-video");
-            const currentSrc = streamImg.getAttribute("src") || "";
-            if (!currentSrc.startsWith("/api/detector/stream")) {
-                streamImg.setAttribute("src", `/api/detector/stream?t=${Date.now()}`);
+            if (!appState.browserTentLoopActive) {
+                const currentSrc = streamImg.getAttribute("src") || "";
+                if (!currentSrc.startsWith("/api/detector/stream")) {
+                    streamImg.setAttribute("src", `/api/detector/stream?t=${Date.now()}`);
+                }
             }
         } else {
             videoBox.classList.add("hidden");
@@ -352,6 +358,100 @@ function renderTentMonitor(det) {
     }
 }
 
+async function pumpBrowserTentFrames() {
+    const streamImg = document.getElementById("tentLiveStreamImg");
+    while (appState.browserTentLoopActive && appState.browserTentVideoEl && appState.browserTentCanvasEl) {
+        try {
+            const video = appState.browserTentVideoEl;
+            const canvas = appState.browserTentCanvasEl;
+            if (video.readyState >= 2 && video.videoWidth > 0) {
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+                const res = await fetchJSON("/api/detector/frame", {
+                    method: "POST",
+                    body: {
+                        image_base64: dataUrl,
+                        active_posko: appState.activePosko,
+                    },
+                });
+                if (res.ok && res.data && appState.browserTentLoopActive) {
+                    if (streamImg && res.data.annotated_image) {
+                        streamImg.src = res.data.annotated_image;
+                    }
+                    if (res.data.status) {
+                        renderTentMonitor(res.data.status);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn("Browser tent frame sync error:", err);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+}
+
+async function startBrowserTentCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Browser ini tidak mendukung akses webcam (pastikan membuka via HTTPS atau localhost).");
+        return false;
+    }
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 360 } },
+            audio: false,
+        });
+        appState.browserTentStream = stream;
+
+        if (!appState.browserTentVideoEl) {
+            const vid = document.createElement("video");
+            vid.setAttribute("playsinline", "true");
+            vid.muted = true;
+            vid.autoplay = true;
+            appState.browserTentVideoEl = vid;
+        }
+        if (!appState.browserTentCanvasEl) {
+            const cvs = document.createElement("canvas");
+            cvs.width = 640;
+            cvs.height = 360;
+            appState.browserTentCanvasEl = cvs;
+        }
+
+        appState.browserTentVideoEl.srcObject = stream;
+        await appState.browserTentVideoEl.play();
+        appState.browserTentLoopActive = true;
+        appState.tentCameraRunning = true;
+
+        renderTentMonitor({
+            camera_running: true,
+            online: true,
+            yolo_camera_online: true,
+            active_posko: appState.activePosko,
+            person_count: appState.detectedPersonCount || 0,
+            detected_residents: [],
+            recognized_residents: [],
+        });
+
+        pumpBrowserTentFrames();
+        return true;
+    } catch (err) {
+        console.error("Failed to open browser webcam for tent monitor:", err);
+        alert("Gagal mengakses kamera perangkat Anda. Pastikan izin kamera (Camera Permission) di browser sudah diizinkan (Allow).");
+        return false;
+    }
+}
+
+async function stopBrowserTentCamera() {
+    appState.browserTentLoopActive = false;
+    if (appState.browserTentStream) {
+        appState.browserTentStream.getTracks().forEach((track) => track.stop());
+        appState.browserTentStream = null;
+    }
+    if (appState.browserTentVideoEl) {
+        appState.browserTentVideoEl.srcObject = null;
+    }
+}
+
 async function toggleTentCamera(forceAction) {
     const shouldStart =
         typeof forceAction === "boolean" ? forceAction : !Boolean(appState.tentCameraRunning);
@@ -365,24 +465,27 @@ async function toggleTentCamera(forceAction) {
 
     try {
         if (shouldStart) {
-            const res = await fetchJSON("/api/detector/camera/start", {
-                method: "POST",
-                body: {
-                    camera_index: 0,
-                    active_posko: appState.activePosko,
-                    show_window: showWindow,
-                },
-            });
-            if (res.data) {
-                renderTentMonitor(res.data);
-            }
-            if (!res.ok) {
-                alert(
-                    res.data?.camera_error ||
-                        "Gagal menyalakan kamera tenda. Pastikan webcam tidak sedang dipakai tab/aplikasi lain."
-                );
+            const isLocalhost =
+                window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+            if (!isLocalhost) {
+                await startBrowserTentCamera();
+            } else {
+                const res = await fetchJSON("/api/detector/camera/start", {
+                    method: "POST",
+                    body: {
+                        camera_index: 0,
+                        active_posko: appState.activePosko,
+                        show_window: showWindow,
+                    },
+                });
+                if (res.ok && res.data) {
+                    renderTentMonitor(res.data);
+                } else {
+                    await startBrowserTentCamera();
+                }
             }
         } else {
+            await stopBrowserTentCamera();
             const res = await fetchJSON("/api/detector/camera/stop", {
                 method: "POST",
             });
